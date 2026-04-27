@@ -14,6 +14,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed-history": "tsx scripts/seed-history.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
