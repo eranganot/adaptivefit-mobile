@@ -1,0 +1,92 @@
+{
+  "app": {
+    "name": "AdaptiveFit",
+    "tagline": "Your AI running coach"
+  },
+  "nav": {
+    "home": "Home",
+    "workouts": "Workouts",
+    "goals": "Goals",
+    "analytics": "Analytics"
+  },
+  "auth": {
+    "signIn": "Sign in with Google",
+    "signOut": "Sign out",
+    "personalApp": "Personal app — single-user instance"
+  },
+  "home": {
+    "greetingMorning": "Good morning, {name}",
+    "greetingAfternoon": "Good afternoon, {name}",
+    "greetingEvening": "Good evening, {name}",
+    "todayPlanned": "Today's session",
+    "logWorkout": "Log Workout",
+    "logRecovery": "Log Recovery Activity",
+    "viewLog": "View Today's Log",
+    "alreadyLogged": "Done — see summary",
+    "yesterdayCard": "Yesterday",
+    "viewDetails": "View details",
+    "goalProgress": "Goal progress",
+    "coachState": "Coach state",
+    "level": "Level {level}",
+    "freezeActive": "Freeze active: {reason}"
+  },
+  "log": {
+    "title": "Log Workout",
+    "type": "Type",
+    "type.run": "Run",
+    "type.strength": "Strength",
+    "type.mobility": "Mobility",
+    "type.other": "Other",
+    "date": "Date",
+    "distance": "Distance (km)",
+    "duration": "Duration",
+    "exercises": "Exercises",
+    "rpe": "RPE (1-10)",
+    "footPain": "Foot pain (0-10)",
+    "otherPain": "Other pain (optional)",
+    "notes": "Notes",
+    "save": "Save",
+    "saving": "Saving…",
+    "savedToast": "Logged. Coach updated. Tomorrow's plan ready."
+  },
+  "goals": {
+    "title": "Goals",
+    "empty": "No active goal",
+    "setFirst": "Set Your First Goal",
+    "type": "Goal type",
+    "type.5k_time": "5k time",
+    "type.10k_time": "10k time",
+    "type.weekly_volume_km": "Weekly volume (km)",
+    "type.sessions_per_week": "Sessions per week",
+    "type.custom": "Custom",
+    "targetValue": "Target value",
+    "targetDate": "Target date",
+    "note": "Note (optional)",
+    "save": "Save Goal",
+    "edit": "Edit",
+    "archive": "Archive",
+    "pacing.onTrack": "On track",
+    "pacing.behind": "Behind",
+    "pacing.ahead": "Ahead"
+  },
+  "analytics": {
+    "title": "Analytics",
+    "range.4w": "4w",
+    "range.12w": "12w",
+    "range.all": "All",
+    "chart.volumeIntensity": "Volume × Intensity",
+    "chart.rtlRecovery": "Training Load × Recovery",
+    "chart.coachLevel": "Coach Level",
+    "chart.goalPacing": "Goal Pacing"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "deleteData": "Delete all data"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "loading": "Loading…",
+    "error": "Something went wrong"
+  }
+}

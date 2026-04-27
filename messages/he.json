@@ -1,0 +1,92 @@
+{
+  "app": {
+    "name": "AdaptiveFit",
+    "tagline": "מאמן הריצה החכם שלך"
+  },
+  "nav": {
+    "home": "בית",
+    "workouts": "אימונים",
+    "goals": "מטרות",
+    "analytics": "ניתוח"
+  },
+  "auth": {
+    "signIn": "כניסה עם Google",
+    "signOut": "התנתקות",
+    "personalApp": "אפליקציה אישית — משתמש בודד"
+  },
+  "home": {
+    "greetingMorning": "בוקר טוב, {name}",
+    "greetingAfternoon": "צהריים טובים, {name}",
+    "greetingEvening": "ערב טוב, {name}",
+    "todayPlanned": "האימון של היום",
+    "logWorkout": "תיעוד אימון",
+    "logRecovery": "תיעוד יום מנוחה",
+    "viewLog": "צפייה ביומן היום",
+    "alreadyLogged": "הושלם — צפייה בסיכום",
+    "yesterdayCard": "אתמול",
+    "viewDetails": "פרטים נוספים",
+    "goalProgress": "התקדמות מטרה",
+    "coachState": "מצב המאמן",
+    "level": "רמה {level}",
+    "freezeActive": "הקפאה פעילה: {reason}"
+  },
+  "log": {
+    "title": "תיעוד אימון",
+    "type": "סוג",
+    "type.run": "ריצה",
+    "type.strength": "כוח",
+    "type.mobility": "ניידות",
+    "type.other": "אחר",
+    "date": "תאריך",
+    "distance": "מרחק (ק\"מ)",
+    "duration": "משך",
+    "exercises": "תרגילים",
+    "rpe": "מאמץ נתפס (1-10)",
+    "footPain": "כאב כף רגל (0-10)",
+    "otherPain": "כאב אחר (לא חובה)",
+    "notes": "הערות",
+    "save": "שמירה",
+    "saving": "שומר…",
+    "savedToast": "נשמר. המאמן עודכן. התוכנית למחר מוכנה."
+  },
+  "goals": {
+    "title": "מטרות",
+    "empty": "אין מטרה פעילה",
+    "setFirst": "הגדרת מטרה ראשונה",
+    "type": "סוג מטרה",
+    "type.5k_time": "זמן 5 ק\"מ",
+    "type.10k_time": "זמן 10 ק\"מ",
+    "type.weekly_volume_km": "נפח שבועי (ק\"מ)",
+    "type.sessions_per_week": "אימונים בשבוע",
+    "type.custom": "מותאם אישית",
+    "targetValue": "ערך יעד",
+    "targetDate": "תאריך יעד",
+    "note": "הערה (לא חובה)",
+    "save": "שמירת מטרה",
+    "edit": "עריכה",
+    "archive": "ארכיון",
+    "pacing.onTrack": "במסלול",
+    "pacing.behind": "מאחור",
+    "pacing.ahead": "מקדים"
+  },
+  "analytics": {
+    "title": "ניתוח",
+    "range.4w": "4 שבועות",
+    "range.12w": "12 שבועות",
+    "range.all": "הכל",
+    "chart.volumeIntensity": "נפח × עצימות",
+    "chart.rtlRecovery": "עומס אימון × התאוששות",
+    "chart.coachLevel": "רמת המאמן",
+    "chart.goalPacing": "התקדמות מטרה"
+  },
+  "settings": {
+    "title": "הגדרות",
+    "language": "שפה",
+    "deleteData": "מחיקת כל הנתונים"
+  },
+  "common": {
+    "cancel": "ביטול",
+    "loading": "טוען…",
+    "error": "משהו השתבש"
+  }
+}
