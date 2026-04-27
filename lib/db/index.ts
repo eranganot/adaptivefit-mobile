@@ -25,6 +25,7 @@ function getPool(): Pool {
 // This allows Next.js to safely import this module during the build phase.
 export const db = new Proxy({} as ReturnType<typeof drizzle>, {
   get(_target, prop) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (drizzle(getPool(), { schema }) as any)[prop];
   },
 });

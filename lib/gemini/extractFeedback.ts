@@ -90,7 +90,7 @@ export async function extractFeedback(ctx: ExtractionContext): Promise<{
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
-  } catch (err) {
+  } catch {
     throw new Error(`Gemini returned invalid JSON: ${text.slice(0, 200)}`);
   }
 
