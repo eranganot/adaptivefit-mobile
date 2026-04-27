@@ -3,7 +3,7 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "pnpm install --no-frozen-lockfile && pnpm db:migrate && pnpm build"
+buildCommand = "pnpm install --no-frozen-lockfile && pnpm db:generate && pnpm db:migrate && pnpm build"
 
 [deploy]
 startCommand = "pnpm start"
