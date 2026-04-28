@@ -82,4 +82,3 @@ export function TrendChart({ data }: Props) {
     </div>
   );
 }
-}
