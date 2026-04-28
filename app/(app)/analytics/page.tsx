@@ -42,7 +42,7 @@ export default async function AnalyticsPage() {
     );
   }
 
-  const { weekly, sessions, coachLevel, freezeActive, totalKm, totalSessions, avgRpe, peakWeekKm } = data;
+  const { sessions, coachLevel, freezeActive, totalKm, totalSessions, avgRpe, peakWeekKm } = data;
   const levelLabel = LEVEL_LABELS[coachLevel] ?? "Training";
   const levelColor = LEVEL_COLORS[(coachLevel - 1) % LEVEL_COLORS.length];
   const levelPct = Math.round((coachLevel / 10) * 100);
@@ -100,22 +100,22 @@ export default async function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ── Weekly volume chart ───────────────────────────────────────────── */}
+      {/* ── Volume & pace chart ───────────────────────────────────────────── */}
       <div className="rounded-2xl border bg-card p-4 shadow-sm">
         <p className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
-          Weekly km (last 8 weeks)
+          Running volume &amp; intensity
         </p>
-        {weekly.every((w) => w.km === 0) ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">No data yet</p>
+        {sessions.filter((s) => s.type === "run").length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">No runs yet</p>
         ) : (
-          <VolumeChart data={weekly} peakWeekKm={peakWeekKm} />
+          <VolumeChart data={sessions} />
         )}
       </div>
 
-      {/* ── RPE + foot pain trend ─────────────────────────────────────────── */}
+      {/* ── Training load vs foot pain ────────────────────────────────────── */}
       <div className="rounded-2xl border bg-card p-4 shadow-sm">
         <p className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
-          RPE & foot pain trend
+          Training load vs. recovery signals
         </p>
         {sessions.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">No sessions yet</p>

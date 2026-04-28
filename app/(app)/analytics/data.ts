@@ -22,6 +22,8 @@ export type SessionPoint = {
   footPain: number;
   type: string;
   km: number | null;
+  paceMinPerKm: number | null; // decimal minutes, e.g. 6.5 = 6:30/km
+  rtl: number; // Relative Training Load = km × (rpe/10)
 };
 
 export type AnalyticsData = {
@@ -76,6 +78,8 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
         footPain: workoutLogs.footPain,
         type: workoutLogs.type,
         distanceKm: workoutLogs.distanceKm,
+        paceSecPerKm: workoutLogs.paceSecPerKm,
+        rtl: workoutLogs.rtl,
       })
       .from(workoutLogs)
       .where(eq(workoutLogs.userId, user.id))
@@ -123,6 +127,8 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     footPain: r.footPain,
     type: r.type,
     km: r.distanceKm ? parseFloat(r.distanceKm) : null,
+    paceMinPerKm: r.paceSecPerKm ? Math.round((r.paceSecPerKm / 60) * 100) / 100 : null,
+    rtl: r.rtl ? parseFloat(r.rtl) : 0,
   }));
 
   // Summary stats
