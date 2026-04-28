@@ -8,10 +8,10 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workoutLogs, userLevelState, users } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, and, gte, asc } from "drizzle-orm";
 
 export type WeeklyBucket = {
-  week: string; // "Mon DD" label
+  week: string; // "DD Mon" label
   km: number;
   sessions: number;
 };
@@ -48,33 +48,39 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   });
   if (!user) return null;
 
+  const twelveWeeksAgo = new Date();
+  twelveWeeksAgo.setDate(twelveWeeksAgo.getDate() - 84);
+
   const [weeklyRaw, sessionsRaw, coachState] = await Promise.all([
-    // ── 12-week weekly volume buckets ──────────────────────────────────────
-    db.execute(sql`
-      SELECT
-        DATE_TRUNC('week', performed_at AT TIME ZONE 'UTC') AS week,
-        ROUND(SUM(COALESCE(distance_km, 0))::numeric, 2)    AS km,
-        COUNT(*)::int                                        AS sessions
-      FROM workout_logs
-      WHERE user_id = ${user.id}
-        AND performed_at >= NOW() - INTERVAL '12 weeks'
-      GROUP BY 1
-      ORDER BY 1
-    `),
+    // ── 12-week weekly volume buckets (typed Drizzle select) ───────────────
+    db
+      .select({
+        week: sql<string>`DATE_TRUNC('week', ${workoutLogs.performedAt} AT TIME ZONE 'UTC')`,
+        km: sql<number>`ROUND(SUM(COALESCE(${workoutLogs.distanceKm}, 0))::numeric, 2)`,
+        sessions: sql<number>`COUNT(*)::int`,
+      })
+      .from(workoutLogs)
+      .where(and(eq(workoutLogs.userId, user.id), gte(workoutLogs.performedAt, twelveWeeksAgo)))
+      .groupBy(
+        sql`DATE_TRUNC('week', ${workoutLogs.performedAt} AT TIME ZONE 'UTC')`,
+      )
+      .orderBy(
+        asc(sql`DATE_TRUNC('week', ${workoutLogs.performedAt} AT TIME ZONE 'UTC')`),
+      ),
 
     // ── Last 20 sessions for trend chart ──────────────────────────────────
-    db.execute(sql`
-      SELECT
-        performed_at,
-        rpe,
-        foot_pain,
-        type,
-        distance_km
-      FROM workout_logs
-      WHERE user_id = ${user.id}
-      ORDER BY performed_at
-      LIMIT 20
-    `),
+    db
+      .select({
+        performedAt: workoutLogs.performedAt,
+        rpe: workoutLogs.rpe,
+        footPain: workoutLogs.footPain,
+        type: workoutLogs.type,
+        distanceKm: workoutLogs.distanceKm,
+      })
+      .from(workoutLogs)
+      .where(eq(workoutLogs.userId, user.id))
+      .orderBy(asc(workoutLogs.performedAt))
+      .limit(20),
 
     // ── Coach state ───────────────────────────────────────────────────────
     db.query.userLevelState.findFirst({
@@ -84,9 +90,9 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
 
   // Shape weekly buckets — fill missing weeks with 0
   const weekMap = new Map<string, { km: number; sessions: number }>();
-  for (const row of weeklyRaw.rows as any[]) {
+  for (const row of weeklyRaw) {
     const d = new Date(row.week);
-    weekMap.set(d.toISOString(), { km: parseFloat(row.km), sessions: row.sessions });
+    weekMap.set(d.toISOString(), { km: Number(row.km), sessions: Number(row.sessions) });
   }
 
   // Build 12 consecutive week buckets
@@ -96,7 +102,6 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     const d = new Date(now);
     d.setDate(d.getDate() - d.getDay() - i * 7); // Monday of that week
     d.setHours(0, 0, 0, 0);
-    // Find matching bucket (match on Monday of week)
     let found: { km: number; sessions: number } | undefined;
     for (const [isoKey, v] of weekMap) {
       const wd = new Date(isoKey);
@@ -105,32 +110,31 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
         break;
       }
     }
-    weekly.push({
-      week: fmtWeekLabel(d),
-      km: found?.km ?? 0,
-      sessions: found?.sessions ?? 0,
-    });
+    weekly.push({ week: fmtWeekLabel(d), km: found?.km ?? 0, sessions: found?.sessions ?? 0 });
   }
 
   // Shape session points
-  const sessions: SessionPoint[] = (sessionsRaw.rows as any[]).map((r) => ({
-    label: new Date(r.performed_at).toLocaleDateString("en-GB", {
+  const sessions: SessionPoint[] = sessionsRaw.map((r) => ({
+    label: new Date(r.performedAt).toLocaleDateString("en-GB", {
       day: "numeric",
       month: "short",
     }),
     rpe: r.rpe,
-    footPain: r.foot_pain,
+    footPain: r.footPain,
     type: r.type,
-    km: r.distance_km ? parseFloat(r.distance_km) : null,
+    km: r.distanceKm ? parseFloat(r.distanceKm) : null,
   }));
 
   // Summary stats
-  const allRows = sessionsRaw.rows as any[];
-  const totalKm = allRows.reduce((s, r) => s + (r.distance_km ? parseFloat(r.distance_km) : 0), 0);
-  const totalSessions = allRows.length;
-  const avgRpe = totalSessions > 0
-    ? Math.round((allRows.reduce((s, r) => s + r.rpe, 0) / totalSessions) * 10) / 10
-    : 0;
+  const totalKm = sessionsRaw.reduce(
+    (s, r) => s + (r.distanceKm ? parseFloat(r.distanceKm) : 0),
+    0,
+  );
+  const totalSessions = sessionsRaw.length;
+  const avgRpe =
+    totalSessions > 0
+      ? Math.round((sessionsRaw.reduce((s, r) => s + r.rpe, 0) / totalSessions) * 10) / 10
+      : 0;
   const peakWeekKm = weekly.reduce((m, w) => Math.max(m, w.km), 0);
 
   return {

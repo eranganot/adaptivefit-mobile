@@ -16,9 +16,15 @@ type Props = {
   peakWeekKm: number;
 };
 
-function CustomTooltip({ active, payload, label }: any) {
+type TooltipProps = {
+  active?: boolean;
+  payload?: Array<{ payload: WeeklyBucket }>;
+  label?: string;
+};
+
+function CustomTooltip({ active, payload, label }: TooltipProps) {
   if (!active || !payload?.length) return null;
-  const d = payload[0].payload as WeeklyBucket;
+  const d = payload[0].payload;
   return (
     <div className="rounded-xl border bg-card px-3 py-2 text-xs shadow-md">
       <p className="font-semibold">{label}</p>

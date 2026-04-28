@@ -16,14 +16,30 @@ type Props = {
   data: SessionPoint[];
 };
 
-function CustomTooltip({ active, payload, label }: any) {
+type TooltipEntry = {
+  dataKey: string;
+  name: string;
+  value: number;
+  color: string;
+  payload: SessionPoint;
+};
+
+type TooltipProps = {
+  active?: boolean;
+  payload?: TooltipEntry[];
+  label?: string;
+};
+
+function CustomTooltip({ active, payload, label }: TooltipProps) {
   if (!active || !payload?.length) return null;
-  const d = payload[0]?.payload as SessionPoint;
+  const d = payload[0]?.payload;
   return (
     <div className="rounded-xl border bg-card px-3 py-2 text-xs shadow-md">
       <p className="font-semibold">{label}</p>
-      {d.km !== null && <p className="text-muted-foreground">{d.km} km · {d.type}</p>}
-      {payload.map((p: any) => (
+      {d?.km !== null && d?.km !== undefined && (
+        <p className="text-muted-foreground">{d.km} km · {d.type}</p>
+      )}
+      {payload.map((p) => (
         <p key={p.dataKey} style={{ color: p.color }}>
           {p.name}: {p.value}/10
         </p>
