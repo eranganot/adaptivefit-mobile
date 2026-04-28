@@ -63,4 +63,6 @@ export function VolumeChart({ data, peakWeekKm }: Props) {
         </BarChart>
       </ResponsiveContainer>
     </div>
-  )
+  );
+};
+}

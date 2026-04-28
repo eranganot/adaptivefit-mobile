@@ -81,3 +81,5 @@ export function TrendChart({ data }: Props) {
       </ResponsiveContainer>
     </div>
   );
+}
+}
