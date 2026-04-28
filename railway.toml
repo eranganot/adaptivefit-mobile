@@ -3,10 +3,10 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "pnpm install --no-frozen-lockfile && pnpm db:generate && pnpm build"
+buildCommand = "pnpm install --no-frozen-lockfile && pnpm build"
 
 [deploy]
-startCommand = "pnpm db:migrate && pnpm start"
+startCommand = "pnpm start"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
