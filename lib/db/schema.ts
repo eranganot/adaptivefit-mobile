@@ -16,7 +16,9 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  customType,
   date,
+  index,
   integer,
   jsonb,
   numeric,
@@ -26,6 +28,13 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+
+// Custom bytea type for photo storage (single-user MVP)
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
 
 // ─────────────────────────────────────────────────────────────────
 // users
@@ -168,6 +177,43 @@ export const coldStartAnalysis = pgTable("cold_start_analysis", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ─────────────────────────────────────────────────────────────────
+// workout_photos — optional photo attached to a workout log (MVP: bytea)
+// ─────────────────────────────────────────────────────────────────
+export const workoutPhotos = pgTable("workout_photos", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workoutLogId: uuid("workout_log_id")
+    .notNull()
+    .references(() => workoutLogs.id, { onDelete: "cascade" }),
+  mimeType: text("mime_type").notNull(),
+  bytes: bytea("bytes").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────────────────────────
+// coach_chat_messages — continuation conversation after a workout
+// ─────────────────────────────────────────────────────────────────
+export const coachChatMessages = pgTable(
+  "coach_chat_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    workoutLogId: uuid("workout_log_id").references(() => workoutLogs.id, {
+      onDelete: "set null",
+    }),
+    role: text("role", { enum: ["user", "assistant"] }).notNull(),
+    content: text("content").notNull(),
+    locale: text("locale", { enum: ["en", "he"] }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userWorkoutIdx: index("coach_chat_user_workout_idx").on(
+      t.userId,
+      t.workoutLogId,
+      t.createdAt,
+    ),
+  }),
+);
 // Type exports for use in app code
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -175,6 +221,4 @@ export type Goal = typeof goals.$inferSelect;
 export type NewGoal = typeof goals.$inferInsert;
 export type WorkoutLog = typeof workoutLogs.$inferSelect;
 export type NewWorkoutLog = typeof workoutLogs.$inferInsert;
-export type FeedbackSentiment = typeof feedbackSentiment.$inferSelect;
-export type UserLevelState = typeof userLevelState.$inferSelect;
-export type TrainingRoadmap = typeof trainingRoadmap.$inferSelect;
+export type FeedbackSentimen

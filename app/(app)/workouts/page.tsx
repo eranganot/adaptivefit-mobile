@@ -1,21 +1,6 @@
-import { getTranslations } from "next-intl/server";
-import { LogWorkoutForm } from "@/components/workouts/LogWorkoutForm";
-import { WorkoutHistory } from "@/components/workouts/WorkoutHistory";
-import { Suspense } from "react";
+import { redirect } from "next/navigation";
 
-export default async function WorkoutsPage() {
-  const t = await getTranslations("log");
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">{t("title")}</h1>
-      <LogWorkoutForm />
-      <Suspense
-        fallback={
-          <p className="text-center text-sm text-muted-foreground py-4">Loading history…</p>
-        }
-      >
-        <WorkoutHistory />
-      </Suspense>
-    </div>
-  );
+// Workouts tab removed in Phase 1 — logging is now part of the Home flow
+export default function WorkoutsPage() {
+  redirect("/home");
 }

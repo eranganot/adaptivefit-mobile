@@ -1,92 +1,69 @@
 {
-  "app": {
-    "name": "AdaptiveFit",
-    "tagline": "מאמן הריצה החכם שלך"
-  },
-  "nav": {
-    "home": "בית",
-    "workouts": "אימונים",
-    "goals": "מטרות",
-    "analytics": "ניתוח"
-  },
-  "auth": {
-    "signIn": "כניסה עם Google",
-    "signOut": "התנתקות",
-    "personalApp": "אפליקציה אישית — משתמש בודד"
-  },
+  "app": { "name": "AdaptiveFit", "tagline": "מאמן הריצה החכם שלך" },
+  "nav": { "home": "בית", "roadmap": "לוח זמנים", "analytics": "ניתוח" },
+  "auth": { "signIn": "כניסה עם Google", "signOut": "התנתקות", "personalApp": "אפליקציה אישית — משתמש בודד" },
   "home": {
-    "greetingMorning": "בוקר טוב, {name}",
-    "greetingAfternoon": "צהריים טובים, {name}",
-    "greetingEvening": "ערב טוב, {name}",
-    "todayPlanned": "האימון של היום",
-    "logWorkout": "תיעוד אימון",
-    "logRecovery": "תיעוד יום מנוחה",
-    "viewLog": "צפייה ביומן היום",
-    "alreadyLogged": "הושלם — צפייה בסיכום",
-    "yesterdayCard": "אתמול",
-    "viewDetails": "פרטים נוספים",
-    "goalProgress": "התקדמות מטרה",
-    "coachState": "מצב המאמן",
-    "level": "רמה {level}",
-    "freezeActive": "הקפאה פעילה: {reason}"
+    "greetingMorning": "בוקר טוב, {name}", "greetingAfternoon": "צהריים טובים, {name}", "greetingEvening": "ערב טוב, {name}",
+    "todayPlanned": "האימון של היום", "insightTitle": "תובנת מאמן",
+    "startRun": "התחל ריצה", "startRunSoon": "בקרוב",
+    "logManual": "תיעוד ידני", "logManualSub": "תעד אחרי הריצה",
+    "alreadyLogged": "כבר תועד היום", "alreadyLoggedSub": "כל הכבוד — ראה את סיכום המאמן למטה",
+    "viewDetails": "פרטים נוספים", "warmup": "חימום", "mainSet": "סט ראשי",
+    "cooldown": "צינון", "mobility": "ניידות", "rest": "מנוחה"
   },
-  "log": {
-    "title": "תיעוד אימון",
-    "type": "סוג",
-    "type.run": "ריצה",
-    "type.strength": "כוח",
-    "type.mobility": "ניידות",
-    "type.other": "אחר",
-    "date": "תאריך",
-    "distance": "מרחק (ק\"מ)",
-    "duration": "משך",
-    "exercises": "תרגילים",
-    "rpe": "מאמץ נתפס (1-10)",
-    "footPain": "כאב כף רגל (0-10)",
-    "otherPain": "כאב אחר (לא חובה)",
-    "notes": "הערות",
-    "save": "שמירה",
-    "saving": "שומר…",
-    "savedToast": "נשמר. המאמן עודכן. התוכנית למחר מוכנה."
+  "post": {
+    "title": "איך היה?", "coachIntro": "ספר לי על האימון ואני אתאים את התוכנית למחר.",
+    "rpeLabel": "רמת מאמץ", "rpeEasy": "קל", "rpeEasySub": "1–3", "rpeModerate": "בינוני", "rpeModerateSub": "4–6",
+    "rpeHard": "קשה", "rpeHardSub": "7–9", "rpeMax": "מקסימלי", "rpeMaxSub": "10",
+    "painLabel": "כאב או אי נוחות?", "painNo": "ללא בעיות", "painYes": "כן, כאב",
+    "notesLabel": "הערות (לא חובה)", "notesPlaceholder": "איך הרגשת בריצה? תיחושים, מזג אוויר, מסלול…",
+    "photoLabel": "הוסף תמונה", "photoAttached": "תמונה מצורפת",
+    "submit": "שלח למאמן", "submitting": "שולח…", "cancel": "ביטול"
   },
-  "goals": {
-    "title": "מטרות",
-    "empty": "אין מטרה פעילה",
-    "setFirst": "הגדרת מטרה ראשונה",
-    "type": "סוג מטרה",
-    "type.5k_time": "זמן 5 ק\"מ",
-    "type.10k_time": "זמן 10 ק\"מ",
-    "type.weekly_volume_km": "נפח שבועי (ק\"מ)",
-    "type.sessions_per_week": "אימונים בשבוע",
-    "type.custom": "מותאם אישית",
-    "targetValue": "ערך יעד",
-    "targetDate": "תאריך יעד",
-    "note": "הערה (לא חובה)",
-    "save": "שמירת מטרה",
-    "edit": "עריכה",
-    "archive": "ארכיון",
-    "pacing.onTrack": "במסלול",
-    "pacing.behind": "מאחור",
-    "pacing.ahead": "מקדים"
+  "analyzing": { "caption": "המאמן מנתח את האימון שלך…" },
+  "done": {
+    "headerTitle": "מאמן AI", "headerSub": "ניתוח אימון", "adjustmentsTitle": "התאמות המאמן",
+    "backHome": "חזרה לבית", "continueChat": "המשך שיחה",
+    "chatPlaceholder": "שאל את המאמן כל שאלה…", "chatSend": "שלח"
+  },
+  "roadmap": {
+    "title": "לוח זמנים קרוב", "weekBadge": "שבוע {week} / {total}", "thisWeek": "השבוע",
+    "statusCompleted": "הושלם", "statusAdjusted": "הותאם", "statusPlanned": "מתוכנן",
+    "adjustedNote": "תוכנית הותאמה על ידי המאמן",
+    "emptyState": "אין אימונים מתוכננים עדיין", "emptyStateSub": "תעד אימון כדי ליצור את מפת הדרכים שלך",
+    "regenerate": "צור מחדש"
   },
   "analytics": {
-    "title": "ניתוח",
-    "range.4w": "4 שבועות",
-    "range.12w": "12 שבועות",
-    "range.all": "הכל",
-    "chart.volumeIntensity": "נפח × עצימות",
-    "chart.rtlRecovery": "עומס אימון × התאוששות",
-    "chart.coachLevel": "רמת המאמן",
-    "chart.goalPacing": "התקדמות מטרה"
+    "title": "ניתוח", "subtitle": "קורלציה בין מאמץ נתפס לקצב בפועל",
+    "weeklyDistance": "מרחק שבועי", "avgRpe": "מאמץ ממוצע", "trendIdeal": "אידיאלי",
+    "range.4w": "4 שבועות", "range.12w": "12 שבועות", "range.all": "הכל",
+    "chart.volumeIntensity": "נפח × עצימות", "chart.rtlRecovery": "עומס אימון × התאוששות",
+    "chart.coachLevel": "רמת המאמן", "chart.goalPacing": "התקדמות מטרה",
+    "chart.rpePace": "מאמץ מול קצב (7 ימים)", "chart.weeklyVol": "מרחק שבועי (4 שבועות)",
+    "noRuns": "עדיין אין ריצות", "noSessions": "עדיין אין אימונים"
   },
   "settings": {
-    "title": "הגדרות",
-    "language": "שפה",
-    "deleteData": "מחיקת כל הנתונים"
+    "title": "הגדרות", "languageSection": "שפה", "languageHint": "LTR", "languageHintHe": "RTL",
+    "themeSection": "מראה", "themeLight": "בהיר", "themeDark": "כהה",
+    "goalsSection": "מטרה", "connectionsSection": "חיבורים",
+    "connectionsFitLabel": "Google Fit", "connectionsFitSub": "יגיע בשלב 3",
+    "aboutSection": "אודות", "signOut": "התנתקות", "language": "שפה", "deleteData": "מחיקת כל הנתונים"
   },
-  "common": {
-    "cancel": "ביטול",
-    "loading": "טוען…",
-    "error": "משהו השתבש"
-  }
+  "goals": {
+    "title": "מטרות", "empty": "אין מטרה פעילה", "setFirst": "הגדרת מטרה ראשונה", "type": "סוג מטרה",
+    "type.5k_time": "זמן 5 ק\"מ", "type.10k_time": "זמן 10 ק\"מ", "type.weekly_volume_km": "נפח שבועי (ק\"מ)",
+    "type.sessions_per_week": "אימונים בשבוע", "type.custom": "מותאם אישית",
+    "targetValue": "ערך יעד", "targetDate": "תאריך יעד", "note": "הערה (לא חובה)",
+    "save": "שמירת מטרה", "edit": "עריכה", "archive": "ארכיון",
+    "pacing.onTrack": "במסלול", "pacing.behind": "מאחור", "pacing.ahead": "מקדים"
+  },
+  "log": {
+    "title": "תיעוד אימון", "type": "סוג", "type.run": "ריצה", "type.strength": "כוח",
+    "type.mobility": "ניידות", "type.other": "אחר", "date": "תאריך",
+    "distance": "מרחק (ק\"מ)", "duration": "משך", "exercises": "תרגילים",
+    "rpe": "מאמץ נתפס (1-10)", "footPain": "כאב כף רגל (0-10)", "otherPain": "כאב אחר (לא חובה)",
+    "notes": "הערות", "save": "שמירה", "saving": "שומר…",
+    "savedToast": "נשמר. המאמן עודכן. התוכנית למחר מוכנה."
+  },
+  "common": { "cancel": "ביטול", "loading": "טוען…", "error": "משהו השתבש" }
 }

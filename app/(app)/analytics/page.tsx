@@ -2,32 +2,34 @@ import { getTranslations } from "next-intl/server";
 import { getAnalyticsData } from "./data";
 import { VolumeChart } from "@/components/analytics/VolumeChart";
 import { TrendChart } from "@/components/analytics/TrendChart";
+import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 
-const LEVEL_LABELS: Record<number, string> = {
-  1: "Base builder",
-  2: "Easy miles",
-  3: "Steady runs",
-  4: "Tempo intro",
-  5: "Tempo blocks",
-  6: "Threshold",
-  7: "Race pace",
-  8: "Peak",
-  9: "Sharpening",
-  10: "Race-ready",
-};
-
-const LEVEL_COLORS = [
-  "bg-emerald-500",
-  "bg-emerald-500",
-  "bg-emerald-500",
-  "bg-teal-500",
-  "bg-teal-500",
-  "bg-blue-500",
-  "bg-blue-500",
-  "bg-violet-500",
-  "bg-violet-500",
-  "bg-rose-500",
-];
+function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
+  if (ideal) {
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+        <Minus className="h-3 w-3" />
+        Ideal
+      </span>
+    );
+  }
+  const isUp = value.startsWith("+");
+  const isDown = value.startsWith("−") || value.startsWith("-");
+  return (
+    <span
+      className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+        isUp
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+          : isDown
+            ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
+            : "bg-slate-100 text-slate-500"
+      }`}
+    >
+      {isUp ? <TrendingUp className="h-3 w-3" /> : isDown ? <TrendingDown className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
+      {value}
+    </span>
+  );
+}
 
 export default async function AnalyticsPage() {
   const t = await getTranslations("analytics");
@@ -36,92 +38,107 @@ export default async function AnalyticsPage() {
   if (!data) {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-semibold">{t("title")}</h1>
+        <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
         <p className="text-sm text-muted-foreground">Sign in to see your analytics.</p>
       </div>
     );
   }
 
-  const { sessions, coachLevel, freezeActive, totalKm, totalSessions, avgRpe, peakWeekKm } = data;
-  const levelLabel = LEVEL_LABELS[coachLevel] ?? "Training";
-  const levelColor = LEVEL_COLORS[(coachLevel - 1) % LEVEL_COLORS.length];
-  const levelPct = Math.round((coachLevel / 10) * 100);
+  const { sessions, weekly, coachLevel, freezeActive, totalKm, totalSessions, avgRpe, peakWeekKm } = data;
+
+  // Stat tile calculations
+  const currentWeekKm = weekly[weekly.length - 1]?.km ?? 0;
+  const prevWeekKm = weekly[weekly.length - 2]?.km ?? 0;
+  const weeklyTrend =
+    prevWeekKm === 0
+      ? null
+      : currentWeekKm >= prevWeekKm * 0.8 && currentWeekKm <= prevWeekKm * 1.2
+        ? null
+        : currentWeekKm > prevWeekKm
+          ? `+${Math.round(((currentWeekKm - prevWeekKm) / prevWeekKm) * 100)}%`
+          : `−${Math.round(((prevWeekKm - currentWeekKm) / prevWeekKm) * 100)}%`;
+
+  const rpeIdeal = avgRpe >= 4 && avgRpe <= 7;
 
   return (
-    <div className="space-y-5">
-      <h1 className="text-2xl font-semibold">{t("title")}</h1>
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
+      </div>
 
-      {/* ── Summary stat cards ─────────────────────────────────────────────── */}
+      {/* ── Stat tiles ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-2xl border bg-card p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Total km</p>
-          <p className="mt-1 text-2xl font-bold">{totalKm}</p>
+        <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {t("weeklyDistance")}
+          </p>
+          <p className="mt-1 text-2xl font-bold">{currentWeekKm.toFixed(1)} km</p>
+          <div className="mt-2">
+            {weeklyTrend ? <TrendChip value={weeklyTrend} /> : <TrendChip value="" ideal />}
+          </div>
         </div>
-        <div className="rounded-2xl border bg-card p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Sessions</p>
-          <p className="mt-1 text-2xl font-bold">{totalSessions}</p>
-        </div>
-        <div className="rounded-2xl border bg-card p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Avg RPE</p>
-          <p className="mt-1 text-2xl font-bold">{avgRpe}</p>
-        </div>
-        <div className="rounded-2xl border bg-card p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Best week</p>
-          <p className="mt-1 text-2xl font-bold">{peakWeekKm} km</p>
+        <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {t("avgRpe")}
+          </p>
+          <p className="mt-1 text-2xl font-bold">{avgRpe > 0 ? avgRpe.toFixed(1) : "—"}</p>
+          <div className="mt-2">
+            {avgRpe > 0 ? <TrendChip value="" ideal={rpeIdeal} /> : null}
+          </div>
         </div>
       </div>
 
-      {/* ── Coach level ───────────────────────────────────────────────────── */}
-      <div className="rounded-2xl border bg-card p-4 shadow-sm">
+      {/* ── RPE vs Pace dual-axis chart ────────────────────────────── */}
+      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+        <p className="mb-1 text-sm font-semibold">{t("chart.rpePace")}</p>
+        <p className="mb-4 text-[11px] text-muted-foreground">
+          <span className="inline-block h-2 w-4 rounded-full bg-blue-600 align-middle" /> RPE &nbsp;
+          <span className="inline-block h-2 w-4 rounded-full bg-red-600 align-middle" /> Pace
+        </p>
+        {sessions.filter((s) => s.type === "run").length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">{t("noRuns")}</p>
+        ) : (
+          <TrendChart data={sessions} />
+        )}
+      </div>
+
+      {/* ── Weekly distance bar chart ──────────────────────────────── */}
+      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+        <p className="mb-1 text-sm font-semibold">{t("chart.weeklyVol")}</p>
+        {sessions.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
+        ) : (
+          <VolumeChart data={weekly} />
+        )}
+      </div>
+
+      {/* ── Coach level ────────────────────────────────────────────── */}
+      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
         <div className="flex items-center justify-between">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {t("chart.coachLevel")}
           </p>
           {freezeActive && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               ❄ Freeze
             </span>
           )}
         </div>
         <div className="mt-2 flex items-end gap-3">
           <span className="text-3xl font-bold">{coachLevel}</span>
-          <span className="mb-0.5 text-sm text-muted-foreground">/10 · {levelLabel}</span>
+          <span className="mb-0.5 text-sm text-muted-foreground">/10</span>
         </div>
-        {/* Progress bar */}
-        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
           <div
-            className={`h-full rounded-full transition-all ${levelColor}`}
-            style={{ width: `${levelPct}%` }}
+            className="h-full rounded-full bg-blue-600 transition-all"
+            style={{ width: `${Math.round((coachLevel / 10) * 100)}%` }}
           />
         </div>
-        <div className="mt-1 flex justify-between text-xs text-muted-foreground">
-          <span>Base</span>
+        <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+          <span>Base builder</span>
           <span>Race-ready</span>
         </div>
-      </div>
-
-      {/* ── Volume & pace chart ───────────────────────────────────────────── */}
-      <div className="rounded-2xl border bg-card p-4 shadow-sm">
-        <p className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
-          Running volume &amp; intensity
-        </p>
-        {sessions.filter((s) => s.type === "run").length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">No runs yet</p>
-        ) : (
-          <VolumeChart data={sessions} />
-        )}
-      </div>
-
-      {/* ── Training load vs foot pain ────────────────────────────────────── */}
-      <div className="rounded-2xl border bg-card p-4 shadow-sm">
-        <p className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
-          Training load vs. recovery signals
-        </p>
-        {sessions.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">No sessions yet</p>
-        ) : (
-          <TrendChart data={sessions} />
-        )}
       </div>
     </div>
   );

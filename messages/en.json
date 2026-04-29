@@ -1,92 +1,66 @@
 {
-  "app": {
-    "name": "AdaptiveFit",
-    "tagline": "Your AI running coach"
-  },
-  "nav": {
-    "home": "Home",
-    "workouts": "Workouts",
-    "goals": "Goals",
-    "analytics": "Analytics"
-  },
-  "auth": {
-    "signIn": "Sign in with Google",
-    "signOut": "Sign out",
-    "personalApp": "Personal app — single-user instance"
-  },
+  "app": { "name": "AdaptiveFit", "tagline": "Your AI running coach" },
+  "nav": { "home": "Home", "roadmap": "Roadmap", "analytics": "Analytics" },
+  "auth": { "signIn": "Sign in with Google", "signOut": "Sign out", "personalApp": "Personal app — single-user instance" },
   "home": {
-    "greetingMorning": "Good morning, {name}",
-    "greetingAfternoon": "Good afternoon, {name}",
-    "greetingEvening": "Good evening, {name}",
-    "todayPlanned": "Today's session",
-    "logWorkout": "Log Workout",
-    "logRecovery": "Log Recovery Activity",
-    "viewLog": "View Today's Log",
-    "alreadyLogged": "Done — see summary",
-    "yesterdayCard": "Yesterday",
-    "viewDetails": "View details",
-    "goalProgress": "Goal progress",
-    "coachState": "Coach state",
-    "level": "Level {level}",
-    "freezeActive": "Freeze active: {reason}"
+    "greetingMorning": "Good morning, {name}", "greetingAfternoon": "Good afternoon, {name}", "greetingEvening": "Good evening, {name}",
+    "todayPlanned": "Today's session", "insightTitle": "Coach Insight",
+    "startRun": "Start Run", "startRunSoon": "Coming soon",
+    "logManual": "Log Manual", "logManualSub": "Log after your run",
+    "alreadyLogged": "Already logged today", "alreadyLoggedSub": "Great work — see your coach summary below",
+    "viewDetails": "View details", "warmup": "Warm-up", "mainSet": "Main Set", "cooldown": "Cool-down", "mobility": "Mobility", "rest": "Rest"
   },
-  "log": {
-    "title": "Log Workout",
-    "type": "Type",
-    "type.run": "Run",
-    "type.strength": "Strength",
-    "type.mobility": "Mobility",
-    "type.other": "Other",
-    "date": "Date",
-    "distance": "Distance (km)",
-    "duration": "Duration",
-    "exercises": "Exercises",
-    "rpe": "RPE (1-10)",
-    "footPain": "Foot pain (0-10)",
-    "otherPain": "Other pain (optional)",
-    "notes": "Notes",
-    "save": "Save",
-    "saving": "Saving…",
-    "savedToast": "Logged. Coach updated. Tomorrow's plan ready."
+  "post": {
+    "title": "How did it go?", "coachIntro": "Tell me about your session and I'll adjust tomorrow's plan.",
+    "rpeLabel": "Effort level", "rpeEasy": "Easy", "rpeEasySub": "1-3", "rpeModerate": "Moderate", "rpeModerateSub": "4-6",
+    "rpeHard": "Hard", "rpeHardSub": "7-9", "rpeMax": "Max", "rpeMaxSub": "10",
+    "painLabel": "Any pain or discomfort?", "painNo": "No Issues", "painYes": "Yes, Pain",
+    "notesLabel": "Notes (optional)", "notesPlaceholder": "How did the run feel? Any tightness, weather, route notes...",
+    "photoLabel": "Add Photo", "photoAttached": "Photo attached",
+    "submit": "Submit to Coach", "submitting": "Submitting...", "cancel": "Cancel"
   },
-  "goals": {
-    "title": "Goals",
-    "empty": "No active goal",
-    "setFirst": "Set Your First Goal",
-    "type": "Goal type",
-    "type.5k_time": "5k time",
-    "type.10k_time": "10k time",
-    "type.weekly_volume_km": "Weekly volume (km)",
-    "type.sessions_per_week": "Sessions per week",
-    "type.custom": "Custom",
-    "targetValue": "Target value",
-    "targetDate": "Target date",
-    "note": "Note (optional)",
-    "save": "Save Goal",
-    "edit": "Edit",
-    "archive": "Archive",
-    "pacing.onTrack": "On track",
-    "pacing.behind": "Behind",
-    "pacing.ahead": "Ahead"
+  "analyzing": { "caption": "Coach is analyzing your session..." },
+  "done": {
+    "headerTitle": "Coach AI", "headerSub": "Session Analysis", "adjustmentsTitle": "Coach's Adjustments",
+    "backHome": "Back to Home", "continueChat": "Continue conversation",
+    "chatPlaceholder": "Ask your coach anything...", "chatSend": "Send"
+  },
+  "roadmap": {
+    "title": "Upcoming Schedule", "weekBadge": "Week {week} / {total}", "thisWeek": "This week",
+    "statusCompleted": "Completed", "statusAdjusted": "Adjusted", "statusPlanned": "Planned",
+    "adjustedNote": "Plan adjusted by coach", "emptyState": "No sessions scheduled yet",
+    "emptyStateSub": "Log a workout to generate your roadmap", "regenerate": "Regenerate plan"
   },
   "analytics": {
-    "title": "Analytics",
-    "range.4w": "4w",
-    "range.12w": "12w",
-    "range.all": "All",
-    "chart.volumeIntensity": "Volume × Intensity",
-    "chart.rtlRecovery": "Training Load × Recovery",
-    "chart.coachLevel": "Coach Level",
-    "chart.goalPacing": "Goal Pacing"
+    "title": "Analytics", "subtitle": "Correlation between perceived effort and actual pace",
+    "weeklyDistance": "Weekly Distance", "avgRpe": "Avg RPE", "trendIdeal": "Ideal",
+    "range.4w": "4w", "range.12w": "12w", "range.all": "All",
+    "chart.volumeIntensity": "Volume x Intensity", "chart.rtlRecovery": "Training Load x Recovery",
+    "chart.coachLevel": "Coach Level", "chart.goalPacing": "Goal Pacing",
+    "chart.rpePace": "RPE vs Pace (7 days)", "chart.weeklyVol": "Weekly Distance (4 weeks)",
+    "noRuns": "No runs yet", "noSessions": "No sessions yet"
   },
   "settings": {
-    "title": "Settings",
-    "language": "Language",
-    "deleteData": "Delete all data"
+    "title": "Settings", "languageSection": "Language", "languageHint": "LTR", "languageHintHe": "RTL",
+    "themeSection": "Appearance", "themeLight": "Light", "themeDark": "Dark",
+    "goalsSection": "Goal", "connectionsSection": "Connections",
+    "connectionsFitLabel": "Google Fit", "connectionsFitSub": "Coming in Phase 3",
+    "aboutSection": "About", "signOut": "Sign out", "language": "Language", "deleteData": "Delete all data"
   },
-  "common": {
-    "cancel": "Cancel",
-    "loading": "Loading…",
-    "error": "Something went wrong"
-  }
+  "goals": {
+    "title": "Goals", "empty": "No active goal", "setFirst": "Set Your First Goal", "type": "Goal type",
+    "type.5k_time": "5k time", "type.10k_time": "10k time", "type.weekly_volume_km": "Weekly volume (km)",
+    "type.sessions_per_week": "Sessions per week", "type.custom": "Custom",
+    "targetValue": "Target value", "targetDate": "Target date", "note": "Note (optional)",
+    "save": "Save Goal", "edit": "Edit", "archive": "Archive",
+    "pacing.onTrack": "On track", "pacing.behind": "Behind", "pacing.ahead": "Ahead"
+  },
+  "log": {
+    "title": "Log Workout", "type": "Type", "type.run": "Run", "type.strength": "Strength",
+    "type.mobility": "Mobility", "type.other": "Other", "date": "Date",
+    "distance": "Distance (km)", "duration": "Duration", "exercises": "Exercises",
+    "rpe": "RPE (1-10)", "footPain": "Foot pain (0-10)", "otherPain": "Other pain (optional)",
+    "notes": "Notes", "save": "Save", "saving": "Saving...", "savedToast": "Logged. Coach updated. Tomorrow's plan ready."
+  },
+  "common": { "cancel": "Cancel", "loading": "Loading...", "error": "Something went wrong" }
 }
