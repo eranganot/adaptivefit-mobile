@@ -221,4 +221,12 @@ export type Goal = typeof goals.$inferSelect;
 export type NewGoal = typeof goals.$inferInsert;
 export type WorkoutLog = typeof workoutLogs.$inferSelect;
 export type NewWorkoutLog = typeof workoutLogs.$inferInsert;
-export type FeedbackSentimen
+export type FeedbackSentiment = typeof feedbackSentiment.$inferSelect;
+export type NewFeedbackSentiment = typeof feedbackSentiment.$inferInsert;
+export type UserLevelState = typeof userLevelState.$inferSelect;
+export type TrainingRoadmap = typeof trainingRoadmap.$inferSelect;
+export type NewTrainingRoadmap = typeof trainingRoadmap.$inferInsert;
+export type ColdStartAnalysis = typeof coldStartAnalysis.$inferSelect;
+export type WorkoutPhoto = typeof workoutPhotos.$inferSelect;
+export type CoachChatMessage = typeof coachChatMessages.$inferSelect;
+export type NewCoachChatMessage = typeof coachChatMessages.$inferInsert;
