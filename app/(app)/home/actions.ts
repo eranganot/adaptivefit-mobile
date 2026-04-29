@@ -85,7 +85,6 @@ export async function logManualWorkout(input: {
     const sentMap = new Map(sentiments.map((s) => [s.workoutLogId, s]));
     const logsWithSentiment = recentRaw.map((l) => ({ ...l, sentiment: sentMap.get(l.id) ?? null }));
 
-    const currentLevel = stateRow?.currentLevel ?? 1;
     const coachResult = evaluateCoach({
       recentLogs: logsWithSentiment,
       state: stateRow ?? { userId: user.id, currentLevel: 1, greenSessionCount: 0, freezeActive: false, freezeReason: null, lastEvaluatedAt: null },
