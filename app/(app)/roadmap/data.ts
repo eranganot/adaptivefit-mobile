@@ -210,12 +210,13 @@ function formatBlockLabel(block: SessionBlock): string {
 
 function formatBlockDetail(block: SessionBlock): string {
   switch (block.kind) {
-    case "run_block":
+    case "run_block": {
       const pace = formatPace(block.paceSecPerKm);
       if (block.reps === 1) {
         return `${block.distanceKm}km @ ${pace} /km`;
       }
       return `${block.reps}× ${block.distanceKm}km @ ${pace} /km`;
+    }
     case "warmup":
       return `${block.durationMin} min`;
     case "mobility":

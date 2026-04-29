@@ -92,12 +92,13 @@ export async function logManualWorkout(input: {
       today: new Date(),
     });
 
+    const { currentLevel, greenSessionCount, freezeActive, freezeReason } = coachResult.newState;
     await db
       .insert(userLevelState)
-      .values({ userId: user.id, ...coachResult.newState, lastEvaluatedAt: new Date() })
+      .values({ userId: user.id, currentLevel, greenSessionCount, freezeActive, freezeReason, lastEvaluatedAt: new Date() })
       .onConflictDoUpdate({
         target: userLevelState.userId,
-        set: { ...coachResult.newState, lastEvaluatedAt: new Date() },
+        set: { currentLevel, greenSessionCount, freezeActive, freezeReason, lastEvaluatedAt: new Date() },
       });
 
     // 5. Gemini post-workout summary
