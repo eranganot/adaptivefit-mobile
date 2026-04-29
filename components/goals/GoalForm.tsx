@@ -51,6 +51,7 @@ interface GoalFormProps {
   initialTargetValue?: number; // always in raw unit (seconds for time types)
   initialTargetDate?: string;
   initialNote?: string;
+  onSuccess?: () => void;
 }
 
 export function GoalForm({
@@ -58,6 +59,7 @@ export function GoalForm({
   initialTargetValue,
   initialTargetDate,
   initialNote = "",
+  onSuccess,
 }: GoalFormProps) {
   const t = useTranslations("goals");
   const router = useRouter();
@@ -127,7 +129,11 @@ export function GoalForm({
       });
 
       if (result.success) {
-        router.push("/goals");
+        if (onSuccess) {
+          onSuccess();
+        } else {
+          router.push("/home");
+        }
         router.refresh();
       } else {
         setError(result.error);

@@ -6,7 +6,7 @@ import { trainingRoadmap, workoutLogs } from "@/lib/db/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { evaluateCoach } from "@/lib/coach";
-import type { SessionPlan } from "@/lib/coach";
+import type { SessionPlan, CoachInputs } from "@/lib/coach";
 
 export async function regenerateRoadmap(userId: string): Promise<void> {
   // Validate user is authenticated
@@ -34,7 +34,7 @@ export async function regenerateRoadmap(userId: string): Promise<void> {
     .orderBy(desc(workoutLogs.performedAt))
     .limit(20);
 
-  const userState = {
+  const userState: CoachInputs["state"] = {
     currentLevel: 1,
     greenSessionCount: 0,
     freezeActive: false,
@@ -47,8 +47,8 @@ export async function regenerateRoadmap(userId: string): Promise<void> {
   for (let weekIdx = 0; weekIdx < 2; weekIdx++) {
     // Tuesday (day 1)
     const tuePlan = evaluateCoach({
-      recentLogs: recentLogs as any,
-      state: userState as any,
+      recentLogs,
+      state: userState,
       today: new Date(),
     }).todayPlan;
 
@@ -64,8 +64,8 @@ export async function regenerateRoadmap(userId: string): Promise<void> {
 
     // Friday (day 4)
     const friPlan = evaluateCoach({
-      recentLogs: recentLogs as any,
-      state: userState as any,
+      recentLogs,
+      state: userState,
       today: new Date(),
     }).todayPlan;
 

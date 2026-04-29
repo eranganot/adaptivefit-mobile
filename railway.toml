@@ -3,9 +3,10 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "pnpm install --no-frozen-lockfile && pnpm db:push && pnpm build"
+buildCommand = "pnpm install --no-frozen-lockfile && pnpm build"
 
 [deploy]
+preDeployCommand = "pnpm db:push"
 startCommand = "pnpm start"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 120

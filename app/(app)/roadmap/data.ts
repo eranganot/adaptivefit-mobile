@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { trainingRoadmap, workoutLogs, goals, users } from "@/lib/db/schema";
 import { eq, and, gte, desc, lte } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
-import type { SessionPlan } from "@/lib/coach";
+import type { SessionPlan, SessionBlock, CoachInputs } from "@/lib/coach";
 
 export type RoadmapSession = {
   id: string;
@@ -143,7 +143,7 @@ async function seedRoadmap(userId: string, goalId: string | null): Promise<void>
     .orderBy(desc(workoutLogs.performedAt))
     .limit(20);
 
-  const userState = {
+  const userState: CoachInputs["state"] = {
     currentLevel: 1,
     greenSessionCount: 0,
     freezeActive: false,
@@ -156,8 +156,8 @@ async function seedRoadmap(userId: string, goalId: string | null): Promise<void>
   for (let weekIdx = 0; weekIdx < 2; weekIdx++) {
     // Tuesday (day 1)
     const tuePlan = evaluateCoach({
-      recentLogs: recentLogs as any,
-      state: userState as any,
+      recentLogs,
+      state: userState,
       today: new Date(),
     }).todayPlan;
 
@@ -173,8 +173,8 @@ async function seedRoadmap(userId: string, goalId: string | null): Promise<void>
 
     // Friday (day 4)
     const friPlan = evaluateCoach({
-      recentLogs: recentLogs as any,
-      state: userState as any,
+      recentLogs,
+      state: userState,
       today: new Date(),
     }).todayPlan;
 
@@ -194,7 +194,7 @@ async function seedRoadmap(userId: string, goalId: string | null): Promise<void>
   }
 }
 
-function formatBlockLabel(block: any): string {
+function formatBlockLabel(block: SessionBlock): string {
   switch (block.kind) {
     case "run_block":
       return "Run Intervals";
@@ -209,7 +209,7 @@ function formatBlockLabel(block: any): string {
   }
 }
 
-function formatBlockDetail(block: any): string {
+function formatBlockDetail(block: SessionBlock): string {
   switch (block.kind) {
     case "run_block":
       const pace = formatPace(block.paceSecPerKm);
