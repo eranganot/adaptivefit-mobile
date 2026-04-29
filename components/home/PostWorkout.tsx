@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { Brain, Check, Frown, X } from "lucide-react";
+import { Brain, Check, Frown } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
 interface PostWorkoutProps {

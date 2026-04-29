@@ -1,6 +1,5 @@
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { trainingRoadmap, workoutLogs, goals, users } from "@/lib/db/schema";
+import { trainingRoadmap, workoutLogs, goals } from "@/lib/db/schema";
 import { eq, and, gte, desc, lte } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
 import type { SessionPlan, SessionBlock, CoachInputs } from "@/lib/coach";

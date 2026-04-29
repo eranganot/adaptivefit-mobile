@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useTranslations } from "next-intl";
-import type { SessionPlan, SessionBlock } from "@/lib/coach";
+import type { SessionPlan } from "@/lib/coach";
 import { logManualWorkout, coachChatTurn } from "@/app/(app)/home/actions";
 import PreWorkout from "./PreWorkout";
 import PostWorkout from "./PostWorkout";
@@ -32,14 +31,13 @@ export default function HomeClient({
   name,
   greetingKey,
   todayPlan,
-  coachLevel,
-  freezeActive,
-  freezeReason,
+  coachLevel: _coachLevel,
+  freezeActive: _freezeActive,
+  freezeReason: _freezeReason,
   loggedToday,
   aiSummary,
   workoutLogId: initialWorkoutLogId,
 }: HomeClientProps) {
-  const t = useTranslations();
   const [state, setState] = useState<HomeState>("pre-workout");
   const [workoutResult, setWorkoutResult] = useState<WorkoutResult | null>(null);
   const [workoutLogId, setWorkoutLogId] = useState<string | null>(initialWorkoutLogId);

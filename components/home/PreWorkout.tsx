@@ -2,7 +2,6 @@
 
 import { useTranslations } from "next-intl";
 import { Sparkles, Zap, ClipboardList } from "lucide-react";
-import { cn } from "@/lib/utils/cn";
 import type { SessionPlan } from "@/lib/coach";
 
 interface PreWorkoutProps {

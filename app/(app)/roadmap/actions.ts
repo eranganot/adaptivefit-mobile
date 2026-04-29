@@ -6,7 +6,7 @@ import { trainingRoadmap, workoutLogs } from "@/lib/db/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { evaluateCoach } from "@/lib/coach";
-import type { SessionPlan, CoachInputs } from "@/lib/coach";
+import type { CoachInputs } from "@/lib/coach";
 
 export async function regenerateRoadmap(userId: string): Promise<void> {
   // Validate user is authenticated

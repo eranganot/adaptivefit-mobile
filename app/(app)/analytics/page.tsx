@@ -44,7 +44,7 @@ export default async function AnalyticsPage() {
     );
   }
 
-  const { sessions, weekly, coachLevel, freezeActive, totalKm, totalSessions, avgRpe, peakWeekKm } = data;
+  const { sessions, weekly, coachLevel, freezeActive, avgRpe } = data;
 
   // Stat tile calculations
   const currentWeekKm = weekly[weekly.length - 1]?.km ?? 0;
