@@ -28,7 +28,8 @@ export default function MapboxLiveMap({
     if (!containerRef.current || mapRef.current) return;
     if (!TOKEN) return;
 
-    let map: ReturnType<typeof import("mapbox-gl")["Map"]["prototype"]["constructor"]>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let map: any;
 
     import("mapbox-gl").then((mapboxgl) => {
       mapboxgl.default.accessToken = TOKEN;
