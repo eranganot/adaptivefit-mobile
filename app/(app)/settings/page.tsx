@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, goals } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { users, goals, oauthTokens } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { SettingsClient } from "./SettingsClient";
 
@@ -52,5 +52,18 @@ export default async function SettingsPage() {
     console.error("Error fetching active goal:", error);
   }
 
-  return <SettingsClient locale={locale} activeGoal={activeGoal} />;
+  // Get Google Fit connection status
+  let fitToken: { status: string; lastSyncAt: Date | null } | null = null;
+  try {
+    const tokenRow = await db.query.oauthTokens.findFirst({
+      where: and(eq(oauthTokens.userId, user.id), eq(oauthTokens.provider, "google_fit")),
+    });
+    if (tokenRow) {
+      fitToken = { status: tokenRow.status, lastSyncAt: tokenRow.lastSyncAt };
+    }
+  } catch (e) {
+    console.error("Error fetching Fit token:", e);
+  }
+
+  return <SettingsClient locale={locale} activeGoal={activeGoal} fitToken={fitToken} />;
 }

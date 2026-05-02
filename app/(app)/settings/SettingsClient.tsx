@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
   Globe,
@@ -11,8 +11,12 @@ import {
   Plug,
   Smartphone,
   LogOut,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  Unplug,
 } from "lucide-react";
-import { setLocale } from "./actions";
+import { setLocale, disconnectGoogleFit, syncGoogleFit } from "./actions";
 import { GoalForm } from "@/components/goals/GoalForm";
 
 type Goal = {
@@ -27,13 +31,21 @@ type Goal = {
 interface SettingsClientProps {
   locale: "en" | "he";
   activeGoal: Goal | null;
+  fitToken: { status: string; lastSyncAt: Date | null } | null;
 }
 
-export function SettingsClient({ locale, activeGoal }: SettingsClientProps) {
+export function SettingsClient({ locale, activeGoal, fitToken }: SettingsClientProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isDark, setIsDark] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showGoalForm, setShowGoalForm] = useState(!activeGoal);
+  const [isSyncing, startSync] = useTransition();
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+
+  // Surface URL params from OAuth callback
+  const fitConnected = searchParams.get("fit_connected");
+  const fitError = searchParams.get("fit_error");
 
   // Initialize theme from localStorage
   useEffect(() => {
@@ -81,6 +93,20 @@ export function SettingsClient({ locale, activeGoal }: SettingsClientProps) {
 
   const handleSignOut = async () => {
     await signOut({ redirectTo: "/" });
+  };
+
+  const handleSyncNow = () => {
+    startSync(async () => {
+      const result = await syncGoogleFit();
+      setSyncResult(result.success ? `Synced — ${result.daysFetched} days updated` : `Error: ${result.error}`);
+      router.refresh();
+    });
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm("Disconnect Google Fit? This will delete your stored tokens.")) return;
+    await disconnectGoogleFit();
+    router.refresh();
   };
 
   return (
@@ -249,16 +275,86 @@ export function SettingsClient({ locale, activeGoal }: SettingsClientProps) {
             </h2>
           </div>
 
-          <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800 rounded-2xl">
-            <div className="flex items-center gap-3">
-              <Smartphone className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-              <span className="font-medium text-gray-900 dark:text-white">
-                Google Fit
-              </span>
+          {/* OAuth callback banners */}
+          {fitConnected === "1" && (
+            <div className="flex items-center gap-2 rounded-2xl bg-green-50 dark:bg-green-900/20 px-4 py-3 text-sm text-green-700 dark:text-green-400">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Google Fit connected! Initial sync is running in the background.
             </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-              Coming in Phase 3
-            </span>
+          )}
+          {fitError && (
+            <div className="flex items-center gap-2 rounded-2xl bg-rose-50 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              Connection failed: {fitError}. Please try again.
+            </div>
+          )}
+          {fitToken?.status === "error" && !fitError && (
+            <div className="flex items-center gap-2 rounded-2xl bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              Google Fit sync failed. Reconnect to restore access.
+            </div>
+          )}
+          {syncResult && (
+            <div className="flex items-center gap-2 rounded-2xl bg-blue-50 dark:bg-blue-900/20 px-4 py-3 text-sm text-blue-700 dark:text-blue-400">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              {syncResult}
+            </div>
+          )}
+
+          {/* Google Fit row */}
+          <div className="rounded-2xl bg-gray-50 dark:bg-slate-800 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Smartphone className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">Google Fit</p>
+                  {fitToken && fitToken.status === "active" ? (
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {fitToken.lastSyncAt
+                        ? `Last synced ${new Date(fitToken.lastSyncAt).toLocaleDateString()}`
+                        : "Connected — syncing…"}
+                    </p>
+                  ) : fitToken?.status === "error" ? (
+                    <p className="text-xs text-rose-500">Sync error — reconnect</p>
+                  ) : (
+                    <p className="text-xs text-gray-400">Not connected</p>
+                  )}
+                </div>
+              </div>
+
+              {fitToken && fitToken.status !== "revoked" ? (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                </div>
+              ) : (
+                <a
+                  href="/api/auth/google-fit"
+                  className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+                >
+                  Connect
+                </a>
+              )}
+            </div>
+
+            {fitToken && fitToken.status !== "revoked" && (
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={handleSyncNow}
+                  disabled={isSyncing}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-2 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                  {isSyncing ? "Syncing…" : "Sync now"}
+                </button>
+                <button
+                  onClick={handleDisconnect}
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 dark:border-rose-800 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
+                >
+                  <Unplug className="h-3.5 w-3.5" />
+                  Disconnect
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

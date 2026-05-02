@@ -7,7 +7,7 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users } from "@/lib/db/schema";
+import { workoutLogs, userLevelState, users, fitDailyMetrics, oauthTokens } from "@/lib/db/schema";
 import { eq, sql, and, gte, asc } from "drizzle-orm";
 
 export type WeeklyBucket = {
@@ -35,6 +35,7 @@ export type AnalyticsData = {
   totalSessions: number;
   avgRpe: number;
   peakWeekKm: number;
+  fitSteps7dAvg: number | null; // null = Fit not connected
 };
 
 function fmtWeekLabel(d: Date): string {
@@ -53,7 +54,11 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   const twelveWeeksAgo = new Date();
   twelveWeeksAgo.setDate(twelveWeeksAgo.getDate() - 84);
 
-  const [weeklyRaw, sessionsRaw, coachState] = await Promise.all([
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sevenDaysAgoDate = sevenDaysAgo.toISOString().slice(0, 10);
+
+  const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics] = await Promise.all([
     // ── 12-week weekly volume buckets (typed Drizzle select) ───────────────
     db
       .select({
@@ -90,6 +95,17 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     db.query.userLevelState.findFirst({
       where: eq(userLevelState.userId, user.id),
     }),
+
+    // ── Google Fit connected? ─────────────────────────────────────────────
+    db.query.oauthTokens.findFirst({
+      where: (t, { and }) => and(eq(t.userId, user.id), eq(t.provider, "google_fit"), eq(t.status, "active")),
+    }),
+
+    // ── Last 7 days of daily step counts ─────────────────────────────────
+    db
+      .select({ steps: fitDailyMetrics.steps })
+      .from(fitDailyMetrics)
+      .where(and(eq(fitDailyMetrics.userId, user.id), gte(fitDailyMetrics.date, sevenDaysAgoDate))),
   ]);
 
   // Shape weekly buckets — fill missing weeks with 0
@@ -143,6 +159,17 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       : 0;
   const peakWeekKm = weekly.reduce((m, w) => Math.max(m, w.km), 0);
 
+  // 7-day average steps (null if Fit not connected)
+  let fitSteps7dAvg: number | null = null;
+  if (fitConnected && fitMetrics.length > 0) {
+    const stepsWithData = fitMetrics.filter((m) => m.steps != null);
+    if (stepsWithData.length > 0) {
+      fitSteps7dAvg = Math.round(
+        stepsWithData.reduce((s, m) => s + (m.steps ?? 0), 0) / stepsWithData.length,
+      );
+    }
+  }
+
   return {
     weekly,
     sessions,
@@ -152,5 +179,6 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     totalSessions,
     avgRpe,
     peakWeekKm: Math.round(peakWeekKm * 10) / 10,
+    fitSteps7dAvg,
   };
 }

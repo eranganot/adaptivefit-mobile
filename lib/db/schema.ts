@@ -257,6 +257,79 @@ export const gpsPoints = pgTable(
   }),
 );
 
+// ─────────────────────────────────────────────────────────────────
+// oauth_tokens — stores Google Fit OAuth credentials per user (Phase 3)
+// ─────────────────────────────────────────────────────────────────
+export const oauthTokens = pgTable(
+  "oauth_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["google_fit"] }).notNull(),
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    scopes: text("scopes").array().notNull().default(sql`ARRAY[]::text[]`),
+    status: text("status", { enum: ["active", "error", "revoked"] })
+      .notNull()
+      .default("active"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userProviderIdx: uniqueIndex("oauth_tokens_user_provider_idx").on(t.userId, t.provider),
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────
+// fit_daily_metrics — daily aggregates pulled from Google Fit (Phase 3)
+// ─────────────────────────────────────────────────────────────────
+export const fitDailyMetrics = pgTable(
+  "fit_daily_metrics",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    date: date("date").notNull(), // YYYY-MM-DD
+    steps: integer("steps"),
+    distanceM: integer("distance_m"),        // metres
+    activeMinutes: integer("active_minutes"),
+    avgHr: integer("avg_hr"),               // bpm average for the day
+    calories: integer("calories"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userDateIdx: uniqueIndex("fit_daily_metrics_user_date_idx").on(t.userId, t.date),
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────
+// fit_sessions — workout sessions pulled from Google Fit (Phase 3)
+// ─────────────────────────────────────────────────────────────────
+export const fitSessions = pgTable(
+  "fit_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    fitSessionId: text("fit_session_id").notNull(),  // Google Fit session ID
+    activityType: integer("activity_type").notNull(), // Google Fit activity type int
+    startTime: timestamp("start_time", { withTimezone: true }).notNull(),
+    endTime: timestamp("end_time", { withTimezone: true }).notNull(),
+    distanceM: integer("distance_m"),
+    avgHr: integer("avg_hr"),
+    maxHr: integer("max_hr"),
+    steps: integer("steps"),
+    calories: integer("calories"),
+    route: jsonb("route"),  // [{lat, lon, ts}] polyline if available
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userFitSessionIdx: uniqueIndex("fit_sessions_user_fit_session_idx").on(t.userId, t.fitSessionId),
+    userStartTimeIdx: index("fit_sessions_user_start_time_idx").on(t.userId, t.startTime),
+  }),
+);
+
 // Type exports for use in app code
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -277,3 +350,9 @@ export type RunSession = typeof runSessions.$inferSelect;
 export type NewRunSession = typeof runSessions.$inferInsert;
 export type GpsPoint = typeof gpsPoints.$inferSelect;
 export type NewGpsPoint = typeof gpsPoints.$inferInsert;
+export type OauthToken = typeof oauthTokens.$inferSelect;
+export type NewOauthToken = typeof oauthTokens.$inferInsert;
+export type FitDailyMetric = typeof fitDailyMetrics.$inferSelect;
+export type NewFitDailyMetric = typeof fitDailyMetrics.$inferInsert;
+export type FitSession = typeof fitSessions.$inferSelect;
+export type NewFitSession = typeof fitSessions.$inferInsert;

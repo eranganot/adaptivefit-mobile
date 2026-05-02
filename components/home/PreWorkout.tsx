@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Sparkles, Zap, ClipboardList } from "lucide-react";
+import { Sparkles, Zap, ClipboardList, Footprints, Timer } from "lucide-react";
 import type { SessionPlan } from "@/lib/coach";
 
 interface PreWorkoutProps {
@@ -12,6 +12,7 @@ interface PreWorkoutProps {
   aiSummary: string | null;
   onLogManual: () => void;
   onStartRun: () => void;
+  fitYesterday: { steps: number | null; activeMinutes: number | null } | null;
 }
 
 function formatRunBlockPace(paceSecPerKm: number): string {
@@ -28,6 +29,7 @@ export default function PreWorkout({
   aiSummary,
   onLogManual,
   onStartRun,
+  fitYesterday,
 }: PreWorkoutProps) {
   const t = useTranslations();
 
@@ -42,6 +44,27 @@ export default function PreWorkout({
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{todayPlan.title}</p>
         )}
       </div>
+
+      {/* Yesterday's Fit stats strip — shown only when Google Fit is connected */}
+      {fitYesterday && (fitYesterday.steps || fitYesterday.activeMinutes) && (
+        <div className="flex items-center gap-4 rounded-2xl bg-slate-100 px-4 py-2.5 dark:bg-slate-800">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Yesterday
+          </p>
+          {fitYesterday.steps != null && (
+            <div className="flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <Footprints className="h-3.5 w-3.5 text-indigo-500" />
+              {fitYesterday.steps.toLocaleString()} steps
+            </div>
+          )}
+          {fitYesterday.activeMinutes != null && (
+            <div className="flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <Timer className="h-3.5 w-3.5 text-emerald-500" />
+              {fitYesterday.activeMinutes} active min
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Coach Insight Card */}
       {todayPlan && (

@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users, feedbackSentiment } from "@/lib/db/schema";
+import { workoutLogs, userLevelState, users, feedbackSentiment, fitDailyMetrics, oauthTokens } from "@/lib/db/schema";
 import { eq, desc, gte, and, inArray } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
 import HomeClient from "@/components/home/HomeClient";
@@ -56,6 +56,25 @@ export default async function HomePage() {
     today: new Date(),
   });
 
+  // Yesterday's Fit stats (shown only if Google Fit connected)
+  let fitYesterday: { steps: number | null; activeMinutes: number | null } | null = null;
+  try {
+    const fitConnected = await db.query.oauthTokens.findFirst({
+      where: (t, { and }) => and(eq(t.userId, user.id), eq(t.provider, "google_fit"), eq(t.status, "active")),
+    });
+    if (fitConnected) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yDate = yesterday.toISOString().slice(0, 10);
+      const metric = await db.query.fitDailyMetrics.findFirst({
+        where: (t, { and }) => and(eq(t.userId, user.id), eq(t.date, yDate)),
+      });
+      if (metric) fitYesterday = { steps: metric.steps, activeMinutes: metric.activeMinutes };
+    }
+  } catch (e) {
+    console.error("fitYesterday non-fatal:", e);
+  }
+
   return (
     <HomeClient
       name={name}
@@ -67,6 +86,7 @@ export default async function HomePage() {
       loggedToday={loggedToday}
       aiSummary={aiSummary}
       workoutLogId={todayLog?.id ?? null}
+      fitYesterday={fitYesterday}
     />
   );
 }

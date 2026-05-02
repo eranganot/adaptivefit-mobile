@@ -2,7 +2,7 @@ import { getTranslations } from "next-intl/server";
 import { getAnalyticsData } from "./data";
 import { VolumeChart } from "@/components/analytics/VolumeChart";
 import { TrendChart } from "@/components/analytics/TrendChart";
-import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Footprints } from "lucide-react";
 
 function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
   if (ideal) {
@@ -44,7 +44,7 @@ export default async function AnalyticsPage() {
     );
   }
 
-  const { sessions, weekly, coachLevel, freezeActive, avgRpe } = data;
+  const { sessions, weekly, coachLevel, freezeActive, avgRpe, fitSteps7dAvg } = data;
 
   // Stat tile calculations
   const currentWeekKm = weekly[weekly.length - 1]?.km ?? 0;
@@ -87,6 +87,20 @@ export default async function AnalyticsPage() {
             {avgRpe > 0 ? <TrendChip value="" ideal={rpeIdeal} /> : null}
           </div>
         </div>
+
+        {/* Steps tile — only shown when Google Fit is connected */}
+        {fitSteps7dAvg != null && (
+          <div className="col-span-2 rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <div className="flex items-center gap-2">
+              <Footprints className="h-4 w-4 text-indigo-500" />
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Daily Steps (7d avg)
+              </p>
+            </div>
+            <p className="mt-1 text-2xl font-bold">{fitSteps7dAvg.toLocaleString()}</p>
+            <p className="mt-1 text-[10px] text-muted-foreground">From Google Fit</p>
+          </div>
+        )}
       </div>
 
       {/* ── RPE vs Pace dual-axis chart ────────────────────────────── */}

@@ -47,6 +47,7 @@ export interface HomeClientProps {
   loggedToday: boolean;
   aiSummary: string | null;
   workoutLogId: string | null;
+  fitYesterday: { steps: number | null; activeMinutes: number | null } | null;
 }
 
 export default function HomeClient({
@@ -59,6 +60,7 @@ export default function HomeClient({
   loggedToday,
   aiSummary,
   workoutLogId: initialWorkoutLogId,
+  fitYesterday,
 }: HomeClientProps) {
   const [state, setState] = useState<HomeState>("pre-workout");
   const [workoutResult, setWorkoutResult] = useState<WorkoutResult | null>(null);
@@ -177,6 +179,7 @@ export default function HomeClient({
           aiSummary={aiSummary}
           onLogManual={handleLogManual}
           onStartRun={handleStartRun}
+          fitYesterday={fitYesterday}
         />
       )}
 
