@@ -6,7 +6,6 @@ import {
   isPointValid,
   windowedPace,
   type GpsRawPoint,
-  type GpsSplit,
 } from "./haversine";
 
 export type RunStatus = "idle" | "acquiring" | "running" | "paused" | "ended";
