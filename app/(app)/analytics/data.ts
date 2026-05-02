@@ -7,7 +7,7 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users, fitDailyMetrics, oauthTokens } from "@/lib/db/schema";
+import { workoutLogs, userLevelState, users, fitDailyMetrics } from "@/lib/db/schema";
 import { eq, sql, and, gte, asc } from "drizzle-orm";
 
 export type WeeklyBucket = {

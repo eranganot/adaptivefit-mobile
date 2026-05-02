@@ -327,12 +327,12 @@ export function SettingsClient({ locale, activeGoal, fitToken }: SettingsClientP
                   <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
                 </div>
               ) : (
-                <a
-                  href="/api/auth/google-fit"
+                <button
+                  onClick={() => { window.location.href = "/api/auth/google-fit"; }}
                   className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
                 >
                   Connect
-                </a>
+                </button>
               )}
             </div>
 

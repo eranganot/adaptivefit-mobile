@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users, feedbackSentiment, fitDailyMetrics, oauthTokens } from "@/lib/db/schema";
+import { workoutLogs, userLevelState, users, feedbackSentiment } from "@/lib/db/schema";
 import { eq, desc, gte, and, inArray } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
 import HomeClient from "@/components/home/HomeClient";
