@@ -173,7 +173,7 @@ export async function GET(req: NextRequest) {
         if (!day.steps && !day.distanceM && !day.activeMinutes) continue;
         await db
           .insert(fitDailyMetrics)
-          .values({ userId: token.userId, date: day.date, ...day })
+          .values({ userId: token.userId, ...day })
           .onConflictDoUpdate({
             target: [fitDailyMetrics.userId, fitDailyMetrics.date],
             set: { ...day, updatedAt: new Date() },
