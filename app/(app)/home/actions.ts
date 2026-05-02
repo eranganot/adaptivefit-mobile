@@ -6,6 +6,7 @@ import {
   workoutLogs,
   workoutPhotos,
   coachChatMessages,
+  runSessions,
   users,
   userLevelState,
   feedbackSentiment,
@@ -14,6 +15,7 @@ import { eq, desc, and, inArray } from "drizzle-orm";
 import { extractFeedback } from "@/lib/gemini/extractFeedback";
 import { summarizePostWorkout } from "@/lib/gemini/summarizePostWorkout";
 import { evaluateCoach } from "@/lib/coach";
+import { regenerateRoadmapForUser } from "@/lib/roadmap/regenerate";
 import { revalidatePath } from "next/cache";
 import { gemini, MODELS } from "@/lib/gemini/client";
 
@@ -26,6 +28,7 @@ export async function logManualWorkout(input: {
   footPain: number; // 0 = no pain, 6 = reported pain
   notes: string;
   photo: File | null;
+  runSessionId?: string; // link to GPS run session if coming from active-run flow
 }): Promise<LogResult> {
   try {
     const session = await auth();
@@ -45,6 +48,18 @@ export async function logManualWorkout(input: {
       .insert(workoutLogs)
       .values({ userId: user.id, performedAt: new Date(), type: "run", rpe, footPain, notesRaw: notes || null })
       .returning();
+
+    // Link run session → workout log if this came from GPS run
+    if (input.runSessionId) {
+      try {
+        await db
+          .update(runSessions)
+          .set({ workoutLogId: log.id })
+          .where(eq(runSessions.id, input.runSessionId));
+      } catch (e) {
+        console.error("runSession link non-fatal:", e);
+      }
+    }
 
     // 2. Photo (non-fatal)
     if (input.photo && input.photo.size > 0) {
@@ -99,6 +114,20 @@ export async function logManualWorkout(input: {
         target: userLevelState.userId,
         set: { currentLevel, greenSessionCount, freezeActive, freezeReason, lastEvaluatedAt: new Date() },
       });
+
+    // Regenerate roadmap if coach FSM triggered a freeze or level promotion
+    const prevLevel = stateRow?.currentLevel ?? 1;
+    const prevFreeze = stateRow?.freezeActive ?? false;
+    const shouldRegen =
+      (freezeActive && !prevFreeze) ||          // freeze just activated
+      currentLevel > prevLevel;                  // level promoted
+    if (shouldRegen) {
+      try {
+        await regenerateRoadmapForUser(user.id);
+      } catch (e) {
+        console.error("regenerateRoadmap non-fatal:", e);
+      }
+    }
 
     // 5. Gemini post-workout summary
     const recentRpe = recentRaw.map((l) => l.rpe).slice(0, 7);

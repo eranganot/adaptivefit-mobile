@@ -11,6 +11,7 @@ interface PreWorkoutProps {
   loggedToday: boolean;
   aiSummary: string | null;
   onLogManual: () => void;
+  onStartRun: () => void;
 }
 
 function formatRunBlockPace(paceSecPerKm: number): string {
@@ -26,6 +27,7 @@ export default function PreWorkout({
   loggedToday,
   aiSummary,
   onLogManual,
+  onStartRun,
 }: PreWorkoutProps) {
   const t = useTranslations();
 
@@ -97,20 +99,14 @@ export default function PreWorkout({
       {/* Action Grid */}
       {!loggedToday ? (
         <div className="grid grid-cols-2 gap-3">
-          {/* Start Run Button - Disabled */}
           <button
-            disabled
-            title={t("home.startRunSoon")}
-            className="group relative flex flex-col items-center justify-center gap-2 rounded-3xl bg-blue-600 p-5 text-white shadow-lg shadow-blue-600/20 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={onStartRun}
+            className="group flex flex-col items-center justify-center gap-2 rounded-3xl bg-blue-600 p-5 text-white shadow-lg shadow-blue-600/20 transition-colors hover:bg-blue-700 active:scale-95"
           >
             <Zap className="h-6 w-6" />
             <span className="text-sm font-semibold">{t("home.startRun")}</span>
-            <div className="pointer-events-none absolute -top-12 left-1/2 -translate-x-1/2 rounded-lg bg-slate-900 px-3 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 whitespace-nowrap">
-              {t("home.startRunSoon")}
-            </div>
           </button>
 
-          {/* Log Manual Button */}
           <button
             onClick={onLogManual}
             className="flex flex-col items-center justify-center gap-2 rounded-3xl border-2 border-slate-200 bg-white p-5 transition-colors hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600 dark:hover:bg-slate-800"
@@ -127,7 +123,6 @@ export default function PreWorkout({
         </div>
       )}
 
-      {/* AI Summary for logged-today case */}
       {loggedToday && aiSummary && (
         <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
           {aiSummary}

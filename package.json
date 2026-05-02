@@ -2,7 +2,7 @@
   "name": "adaptivefit-mobile",
   "version": "0.1.0",
   "private": true,
-  "description": "Personal training PWA — runner rehab + AI coach (Gemini). Single-user Next.js + Postgres on Railway.",
+  "description": "Personal training PWA \u2014 runner rehab + AI coach (Gemini). Single-user Next.js + Postgres on Railway.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -48,7 +48,8 @@
     "recharts": "^2.13.3",
     "tailwind-merge": "^2.5.4",
     "tailwindcss-animate": "^1.0.7",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "mapbox-gl": "^3.9.4"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
@@ -65,7 +66,8 @@
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4"
+    "vitest": "^2.1.4",
+    "@types/mapbox-gl": "^3.4.2"
   },
   "engines": {
     "node": ">=20"

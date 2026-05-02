@@ -18,6 +18,7 @@ import {
   boolean,
   customType,
   date,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -214,6 +215,48 @@ export const coachChatMessages = pgTable(
     ),
   }),
 );
+// ─────────────────────────────────────────────────────────────────
+// run_sessions — one row per GPS-tracked run (Phase 2)
+// ─────────────────────────────────────────────────────────────────
+export const runSessions = pgTable("run_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  workoutLogId: uuid("workout_log_id").unique().references(() => workoutLogs.id, {
+    onDelete: "set null",
+  }),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
+  distanceKm: numeric("distance_km", { precision: 6, scale: 3 }).notNull(),
+  durationSec: integer("duration_sec").notNull(),
+  avgPaceSecPerKm: integer("avg_pace_sec_per_km").notNull(),
+  splits: jsonb("splits").notNull(), // [{km:1, paceSec:330}, ...]
+  source: text("source", { enum: ["gps", "manual", "fit"] }).notNull().default("gps"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────────────────────────
+// gps_points — raw GPS trail for a run session (Phase 2)
+// ─────────────────────────────────────────────────────────────────
+export const gpsPoints = pgTable(
+  "gps_points",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runSessionId: uuid("run_session_id")
+      .notNull()
+      .references(() => runSessions.id, { onDelete: "cascade" }),
+    ts: timestamp("ts", { withTimezone: true }).notNull(),
+    lat: doublePrecision("lat").notNull(),
+    lon: doublePrecision("lon").notNull(),
+    accuracyM: numeric("accuracy_m", { precision: 6, scale: 2 }),
+    altitudeM: numeric("altitude_m", { precision: 7, scale: 2 }),
+    heartRate: integer("heart_rate"),
+    stepsDelta: integer("steps_delta"),
+  },
+  (t) => ({
+    sessionTsIdx: index("gps_points_session_ts_idx").on(t.runSessionId, t.ts),
+  }),
+);
+
 // Type exports for use in app code
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -230,3 +273,7 @@ export type ColdStartAnalysis = typeof coldStartAnalysis.$inferSelect;
 export type WorkoutPhoto = typeof workoutPhotos.$inferSelect;
 export type CoachChatMessage = typeof coachChatMessages.$inferSelect;
 export type NewCoachChatMessage = typeof coachChatMessages.$inferInsert;
+export type RunSession = typeof runSessions.$inferSelect;
+export type NewRunSession = typeof runSessions.$inferInsert;
+export type GpsPoint = typeof gpsPoints.$inferSelect;
+export type NewGpsPoint = typeof gpsPoints.$inferInsert;

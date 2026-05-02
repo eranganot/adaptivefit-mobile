@@ -446,6 +446,11 @@ CREATE TABLE fit_sessions (
 
 **Goal:** Tap Start Run → live tracking → End Run → review summary → hand off to coach feedback. No Fit dependency yet.
 
+### Phase 1 gaps (carry-forward — complete before Day 4 work)
+- [ ] Wire `regenerateRoadmap()` call inside `logManualWorkout` server action — invoke after coach FSM evaluates and produces a freeze or level promotion, so the roadmap refreshes automatically post-workout.
+- [ ] Delete `/workouts` and `/goals` route directories entirely (currently they are redirect stubs — remove the directories so no dead routes exist in the build).
+- [ ] Vitest: add post-workout flow integration test (logManualWorkout happy path + freeze path) and RTL snapshot tests for Home, Roadmap, and Analytics pages.
+
 ### Day 4 — GPS plumbing + active-run UI
 - [ ] Install `mapbox-gl@^3` + `@types/mapbox-gl`. Add `NEXT_PUBLIC_MAPBOX_TOKEN` to `.env`/Railway.
 - [ ] Build `lib/run/tracker.ts`:
