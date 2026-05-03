@@ -49,12 +49,12 @@ export async function recomputeAfterChange(userId: string): Promise<void> {
     const coachResult = evaluateCoach({
       recentLogs: logsWithSentiment,
       state: stateRow ?? {
-        userId,
         currentLevel: 1,
         greenSessionCount: 0,
         freezeActive: false,
         freezeReason: null,
-        lastEvaluatedAt: null,
+        manualOverride: false,
+        manualOverrideUntil: null,
       },
       today: new Date(),
     });
