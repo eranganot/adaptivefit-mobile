@@ -62,7 +62,7 @@ export default async function HomePage() {
 
   const coachResult = evaluateCoach({
     recentLogs: logsWithSentiment,
-    state: stateRow ?? { userId: user.id, currentLevel: 1, greenSessionCount: 0, freezeActive: false, freezeReason: null, lastEvaluatedAt: null },
+    state: stateRow ?? { currentLevel: 1, greenSessionCount: 0, freezeActive: false, freezeReason: null, manualOverride: false, manualOverrideUntil: null },
     today: new Date(),
   });
 
