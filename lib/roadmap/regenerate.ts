@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { trainingRoadmap, workoutLogs, userLevelState } from "@/lib/db/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
-import { evaluateCoach, buildSessionForLevel } from "@/lib/coach";
+import { evaluateCoach } from "@/lib/coach";
 import type { CoachInputs } from "@/lib/coach";
 
 /**

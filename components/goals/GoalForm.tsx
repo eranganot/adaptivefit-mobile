@@ -145,7 +145,7 @@ export function GoalForm({ onSuccess }: GoalFormProps) {
       }
 
       if (result.success) {
-        onSuccess ? onSuccess() : router.push("/home");
+        if (onSuccess) { onSuccess(); } else { router.push("/home"); }
         router.refresh();
       } else {
         setError(result.error);

@@ -3,7 +3,6 @@ import { getAnalyticsData } from "./data";
 import { VolumeChart } from "@/components/analytics/VolumeChart";
 import { TrendChart } from "@/components/analytics/TrendChart";
 import { TrendingUp, TrendingDown, Minus, Footprints, Scale, Activity, Dumbbell } from "lucide-react";
-import type { GoalCategory } from "./data";
 
 function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
   if (ideal) {

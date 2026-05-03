@@ -8,7 +8,6 @@ import {
   fitDailyMetrics,
   fitSessions,
   coldStartAnalysis,
-  userLevelState,
 } from "@/lib/db/schema";
 import { eq, and, gte } from "drizzle-orm";
 import { gemini, MODELS } from "@/lib/gemini/client";

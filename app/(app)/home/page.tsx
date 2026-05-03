@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { workoutLogs, userLevelState, users, feedbackSentiment, trainingRoadmap, coachChatMessages } from "@/lib/db/schema";
-import { eq, desc, gte, and, inArray, count, gt } from "drizzle-orm";
+import { eq, desc, gte, and, inArray, count } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
 import HomeClient from "@/components/home/HomeClient";
 import { getPendingColdStart } from "./coldStartActions";
