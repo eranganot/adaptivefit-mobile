@@ -3,11 +3,11 @@ import { ChatThread } from "@/components/coach/ChatThread";
 import { notFound } from "next/navigation";
 
 interface PageProps {
-  params: { workoutLogId: string };
+  params: Promise<{ workoutLogId: string }>;
 }
 
 export default async function CoachThreadPage({ params }: PageProps) {
-  const { workoutLogId } = params;
+  const { workoutLogId } = await params;
 
   if (!workoutLogId || workoutLogId.length < 10) notFound();
 
