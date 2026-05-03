@@ -33,7 +33,6 @@ export default function DoneState({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Hydrate chat history from DB on mount
@@ -44,7 +43,6 @@ export default function DoneState({
         setChatMessages(msgs.map((m) => ({ id: m.id, role: m.role, content: m.content })));
         setShowChat(true);
       }
-      setHistoryLoaded(true);
     });
   }, [workoutLogId]);
 

@@ -5,7 +5,6 @@ import { db } from "@/lib/db";
 import {
   workoutLogs,
   feedbackSentiment,
-  coachChatMessages,
   runSessions,
   users,
 } from "@/lib/db/schema";

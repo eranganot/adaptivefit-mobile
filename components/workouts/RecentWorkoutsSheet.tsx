@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Pencil, Trash2, ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils/cn";
+import { X, Pencil, Trash2 } from "lucide-react";
 import { getRecentWorkouts, deleteWorkout } from "@/lib/workouts/actions";
 import type { RecentWorkout } from "@/lib/workouts/actions";
 import { EditWorkoutForm } from "./EditWorkoutForm";
@@ -53,7 +52,7 @@ export function RecentWorkoutsSheet({ open, onClose, onMutated }: RecentWorkouts
     onMutated();
   };
 
-  const handleEditSaved = (id: string) => {
+  const handleEditSaved = (_id: string) => {
     setEditingId(null);
     // Refresh list
     getRecentWorkouts(10).then(setWorkouts);
