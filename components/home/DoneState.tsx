@@ -1,19 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Brain, Send } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { getChatHistory } from "@/app/(app)/home/actions";
 
 interface DoneStateProps {
   summary: string;
   adjustments: string[];
   onBack: () => void;
-  onChat: (message: string) => Promise<void>;
+  /** Returns the coach's reply text. */
+  onChat: (message: string) => Promise<string>;
   workoutLogId: string | null;
 }
 
 interface ChatMessage {
+  id?: string;
   role: "user" | "assistant";
   content: string;
 }
@@ -30,32 +33,48 @@ export default function DoneState({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const handleContinueChat = () => {
-    setShowChat(true);
-  };
+  // Hydrate chat history from DB on mount
+  useEffect(() => {
+    if (!workoutLogId) return;
+    getChatHistory(workoutLogId, 40).then((msgs) => {
+      if (msgs.length > 0) {
+        setChatMessages(msgs.map((m) => ({ id: m.id, role: m.role, content: m.content })));
+        setShowChat(true);
+      }
+      setHistoryLoaded(true);
+    });
+  }, [workoutLogId]);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (showChat) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, showChat]);
+
+  const handleContinueChat = () => setShowChat(true);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || isSending || !workoutLogId) return;
 
-    const userMessage = chatInput;
+    const userMessage = chatInput.trim();
     setChatInput("");
-
-    // Add user message to chat
     setChatMessages((prev) => [...prev, { role: "user", content: userMessage }]);
 
     setIsSending(true);
     try {
-      await onChat(userMessage);
-      // In a real implementation, you'd get the assistant response from the server action
-      // For now, we just call the action which handles persistence
+      const reply = await onChat(userMessage);
+      setChatMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+    } catch (error) {
+      console.error("Chat send error:", error);
       setChatMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Message received and processed." },
+        { role: "assistant", content: "Sorry, something went wrong. Please try again." },
       ]);
-    } catch (error) {
-      console.error("Error sending message:", error);
     } finally {
       setIsSending(false);
     }
@@ -80,7 +99,6 @@ export default function DoneState({
       <div className="space-y-3 rounded-3xl bg-white shadow-sm p-5 dark:bg-slate-900">
         <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{summary}</p>
 
-        {/* Adjustments Nested Card */}
         <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/50">
           <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3">
             {t("done.adjustmentsTitle")}
@@ -104,23 +122,25 @@ export default function DoneState({
         >
           {t("done.backHome")}
         </button>
-        <button
-          onClick={handleContinueChat}
-          className="rounded-2xl bg-slate-900 px-4 py-4 font-semibold text-white transition-colors hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600"
-        >
-          {t("done.continueChat")}
-        </button>
+        {!showChat && (
+          <button
+            onClick={handleContinueChat}
+            className="rounded-2xl bg-slate-900 px-4 py-4 font-semibold text-white transition-colors hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600"
+          >
+            {t("done.continueChat")}
+          </button>
+        )}
       </div>
 
-      {/* Chat Input */}
+      {/* Chat Panel */}
       {showChat && (
         <div className="space-y-3 rounded-2xl bg-slate-50 p-4 dark:bg-slate-900/50">
-          {/* Chat History */}
+          {/* History */}
           {chatMessages.length > 0 && (
-            <div className="space-y-3 mb-4 max-h-48 overflow-y-auto">
+            <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
               {chatMessages.map((msg, idx) => (
                 <div
-                  key={idx}
+                  key={msg.id ?? idx}
                   className={cn(
                     "flex gap-2 text-sm",
                     msg.role === "user" ? "justify-end" : "justify-start",
@@ -128,7 +148,7 @@ export default function DoneState({
                 >
                   <div
                     className={cn(
-                      "rounded-lg px-3 py-2 max-w-xs",
+                      "rounded-2xl px-3 py-2 max-w-[80%] leading-relaxed",
                       msg.role === "user"
                         ? "bg-indigo-600 text-white"
                         : "bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-slate-100",
@@ -140,11 +160,12 @@ export default function DoneState({
               ))}
               {isSending && (
                 <div className="flex gap-2 text-sm justify-start">
-                  <div className="rounded-lg px-3 py-2 bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-slate-100">
-                    <span className="text-xs opacity-60">Loading...</span>
+                  <div className="rounded-2xl px-3 py-2 bg-slate-200 text-slate-900 dark:bg-slate-700 dark:text-slate-100">
+                    <span className="text-xs opacity-60">…</span>
                   </div>
                 </div>
               )}
+              <div ref={bottomRef} />
             </div>
           )}
 

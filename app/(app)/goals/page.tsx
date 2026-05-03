@@ -1,6 +1,7 @@
-import { redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
-// Goals tab removed in Phase 1 — goal management moved to Settings
+// Route removed — goal management lives in Settings.
+// Returning 404 so no stale link silently succeeds.
 export default function GoalsPage() {
-  redirect("/settings");
+  notFound();
 }

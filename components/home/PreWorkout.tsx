@@ -1,14 +1,18 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Sparkles, Zap, ClipboardList, Footprints, Timer } from "lucide-react";
+import { Sparkles, Zap, ClipboardList, Footprints, Timer, History } from "lucide-react";
 import type { SessionPlan } from "@/lib/coach";
+import { RecentWorkoutsSheet } from "@/components/workouts/RecentWorkoutsSheet";
 
 interface PreWorkoutProps {
   name: string;
   greetingKey: "greetingMorning" | "greetingAfternoon" | "greetingEvening";
   todayPlan: SessionPlan | null;
   loggedToday: boolean;
+  todayLogCount: number;
   aiSummary: string | null;
   onLogManual: () => void;
   onStartRun: () => void;
@@ -26,12 +30,15 @@ export default function PreWorkout({
   greetingKey,
   todayPlan,
   loggedToday,
+  todayLogCount,
   aiSummary,
   onLogManual,
   onStartRun,
   fitYesterday,
 }: PreWorkoutProps) {
   const t = useTranslations();
+  const router = useRouter();
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -119,38 +126,54 @@ export default function PreWorkout({
         </div>
       )}
 
-      {/* Action Grid */}
-      {!loggedToday ? (
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={onStartRun}
-            className="group flex flex-col items-center justify-center gap-2 rounded-3xl bg-blue-600 p-5 text-white shadow-lg shadow-blue-600/20 transition-colors hover:bg-blue-700 active:scale-95"
-          >
-            <Zap className="h-6 w-6" />
-            <span className="text-sm font-semibold">{t("home.startRun")}</span>
-          </button>
-
-          <button
-            onClick={onLogManual}
-            className="flex flex-col items-center justify-center gap-2 rounded-3xl border-2 border-slate-200 bg-white p-5 transition-colors hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600 dark:hover:bg-slate-800"
-          >
-            <ClipboardList className="h-6 w-6 text-slate-700 dark:text-slate-300" />
-            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              {t("home.logManual")}
-            </span>
-          </button>
-        </div>
-      ) : (
+      {/* "Already logged" status chip — shown above buttons, not instead of them */}
+      {loggedToday && (
         <div className="rounded-full bg-emerald-100 px-4 py-2 text-center text-sm font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-          ✓ {t("home.alreadyLogged")}
+          ✓ {todayLogCount === 1 ? t("home.alreadyLogged") : `${todayLogCount} workouts logged today`}
         </div>
       )}
+
+      {/* Action Grid — always visible so users can log multiple workouts per day */}
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          onClick={onStartRun}
+          className="group flex flex-col items-center justify-center gap-2 rounded-3xl bg-blue-600 p-5 text-white shadow-lg shadow-blue-600/20 transition-colors hover:bg-blue-700 active:scale-95"
+        >
+          <Zap className="h-6 w-6" />
+          <span className="text-sm font-semibold">{t("home.startRun")}</span>
+        </button>
+
+        <button
+          onClick={onLogManual}
+          className="flex flex-col items-center justify-center gap-2 rounded-3xl border-2 border-slate-200 bg-white p-5 transition-colors hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600 dark:hover:bg-slate-800"
+        >
+          <ClipboardList className="h-6 w-6 text-slate-700 dark:text-slate-300" />
+          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {t("home.logManual")}
+          </span>
+        </button>
+      </div>
 
       {loggedToday && aiSummary && (
         <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
           {aiSummary}
         </div>
       )}
+
+      {/* History access — always visible so users can edit/delete past logs */}
+      <button
+        onClick={() => setSheetOpen(true)}
+        className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors mx-auto"
+      >
+        <History className="h-3.5 w-3.5" />
+        View recent workouts
+      </button>
+
+      <RecentWorkoutsSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        onMutated={() => router.refresh()}
+      />
     </div>
   );
 }

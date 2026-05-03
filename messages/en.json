@@ -6,6 +6,7 @@
   "nav": {
     "home": "Home",
     "roadmap": "Roadmap",
+    "coach": "Coach",
     "analytics": "Analytics"
   },
   "auth": {
@@ -53,7 +54,9 @@
     "photoAttached": "Photo attached",
     "submit": "Submit to Coach",
     "submitting": "Submitting...",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "discardDraft": "Discard your draft? Unsaved changes will be lost.",
+    "photoReattach": "⚠ Photo was attached — please re-attach"
   },
   "analyzing": {
     "caption": "Coach is analyzing your session..."

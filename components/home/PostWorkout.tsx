@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { Brain, Check, Frown } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { useDraftWorkout } from "@/lib/hooks/useDraftWorkout";
 
 interface PostWorkoutProps {
   isSubmitting: boolean;
@@ -30,27 +31,43 @@ export default function PostWorkout({ isSubmitting, prefillRpe, onSubmit, onCanc
   const t = useTranslations();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedRPE, setSelectedRPE] = useState<number | null>(prefillRpe ?? null);
-  const [painSelected, setPainSelected] = useState<boolean | null>(null);
-  const [notes, setNotes] = useState("");
+  const { initialDraft, saveDraft, clearDraft } = useDraftWorkout();
+
+  // Hydrate from draft; prefillRpe takes precedence if caller supplies it
+  const [selectedRPE, setSelectedRPE] = useState<number | null>(
+    prefillRpe ?? initialDraft.rpe,
+  );
+  const [painSelected, setPainSelected] = useState<boolean | null>(
+    initialDraft.painSelected,
+  );
+  const [notes, setNotes] = useState(initialDraft.notes);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
 
-  const handlePhotoClick = () => {
-    fileInputRef.current?.click();
-  };
+  // Show a hint when a photo was attached in a previous session but can't be restored
+  const hadPhotoAttached = initialDraft.photoMeta !== null;
+
+  // Persist draft on every field change (debounced inside saveDraft)
+  useEffect(() => {
+    saveDraft({
+      rpe: selectedRPE,
+      painSelected,
+      notes,
+      photoMeta: photoFile
+        ? { name: photoFile.name, type: photoFile.type, size: photoFile.size }
+        : null,
+    });
+  }, [selectedRPE, painSelected, notes, photoFile, saveDraft]);
+
+  const handlePhotoClick = () => fileInputRef.current?.click();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setPhotoFile(file);
-    }
+    if (file) setPhotoFile(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedRPE === null || painSelected === null) {
-      return;
-    }
+    if (selectedRPE === null || painSelected === null) return;
 
     await onSubmit({
       rpe: selectedRPE,
@@ -58,6 +75,17 @@ export default function PostWorkout({ isSubmitting, prefillRpe, onSubmit, onCanc
       notes,
       photo: photoFile,
     });
+
+    // Clear draft after successful submit
+    clearDraft();
+  };
+
+  const handleCancel = () => {
+    const hasDraftData =
+      selectedRPE !== null || painSelected !== null || notes.trim() !== "" || photoFile !== null;
+    if (hasDraftData && !confirm(t("post.discardDraft"))) return;
+    clearDraft();
+    onCancel();
   };
 
   const isFormValid = selectedRPE !== null && painSelected !== null;
@@ -164,20 +192,22 @@ export default function PostWorkout({ isSubmitting, prefillRpe, onSubmit, onCanc
           className="w-full rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-900 transition-colors hover:border-slate-400 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-500 dark:hover:bg-slate-800"
         >
           {photoFile ? (
-            <>
-              ✓ {t("post.photoAttached")}
-            </>
+            <>✓ {t("post.photoAttached")}</>
+          ) : hadPhotoAttached ? (
+            <span className="text-amber-600 dark:text-amber-400">
+              {t("post.photoReattach")}
+            </span>
           ) : (
             t("post.photoLabel")
           )}
         </button>
       </div>
 
-      {/* Cancel at top right - rendered as a pill */}
+      {/* Cancel */}
       <div className="flex justify-end">
         <button
           type="button"
-          onClick={onCancel}
+          onClick={handleCancel}
           className="rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-900 transition-colors hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
         >
           {t("post.cancel")}

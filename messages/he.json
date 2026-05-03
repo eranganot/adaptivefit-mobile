@@ -6,6 +6,7 @@
   "nav": {
     "home": "בית",
     "roadmap": "לוח זמנים",
+    "coach": "מאמן",
     "analytics": "ניתוח"
   },
   "auth": {
@@ -53,7 +54,9 @@
     "photoAttached": "תמונה מצורפת",
     "submit": "שלח למאמן",
     "submitting": "שולח…",
-    "cancel": "ביטול"
+    "cancel": "ביטול",
+    "discardDraft": "לבטל את הטיוטה? השינויים שלא נשמרו יאבדו.",
+    "photoReattach": "⚠ תמונה הייתה מצורפת — אנא צרף מחדש"
   },
   "analyzing": {
     "caption": "המאמן מנתח את האימון שלך…"

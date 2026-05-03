@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { saveGoal } from "@/app/(app)/goals/actions";
+import { saveGoal } from "@/lib/goals/actions";
 import { cn } from "@/lib/utils/cn";
 
 type GoalType = "5k_time" | "10k_time" | "weekly_volume_km" | "sessions_per_week" | "custom";

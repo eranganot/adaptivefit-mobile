@@ -11,7 +11,7 @@ import {
   userLevelState,
   feedbackSentiment,
 } from "@/lib/db/schema";
-import { eq, desc, and, inArray } from "drizzle-orm";
+import { eq, desc, and, inArray, sql } from "drizzle-orm";
 import { extractFeedback } from "@/lib/gemini/extractFeedback";
 import { summarizePostWorkout } from "@/lib/gemini/summarizePostWorkout";
 import { evaluateCoach } from "@/lib/coach";
@@ -193,5 +193,116 @@ export async function coachChatTurn(
   } catch (err) {
     console.error("coachChatTurn error:", err);
     return { error: err instanceof Error ? err.message : "Chat error" };
+  }
+}
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: Date;
+};
+
+/** Fetch persisted chat messages for a given workout log, oldest-first. */
+export async function getChatHistory(
+  workoutLogId: string,
+  limit = 40,
+): Promise<ChatMessage[]> {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) return [];
+
+    const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
+    if (!user) return [];
+
+    const rows = await db
+      .select()
+      .from(coachChatMessages)
+      .where(
+        and(
+          eq(coachChatMessages.userId, user.id),
+          eq(coachChatMessages.workoutLogId, workoutLogId),
+        ),
+      )
+      .orderBy(coachChatMessages.createdAt)
+      .limit(limit);
+
+    return rows.map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      createdAt: r.createdAt,
+    }));
+  } catch (err) {
+    console.error("getChatHistory error:", err);
+    return [];
+  }
+}
+
+export type ChatThread = {
+  workoutLogId: string;
+  performedAt: Date;
+  workoutType: string;
+  messageCount: number;
+  lastMessage: string;
+  lastMessageAt: Date;
+};
+
+/** Fetch all workout logs that have at least one coach chat message, newest first. */
+export async function getChatThreads(): Promise<ChatThread[]> {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) return [];
+
+    const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
+    if (!user) return [];
+
+    // Get workout logs with chat messages via subquery
+    const rows = await db
+      .select({
+        workoutLogId: coachChatMessages.workoutLogId,
+        messageCount: sql<number>`cast(count(*) as int)`,
+        lastMessage: sql<string>`(array_agg(${coachChatMessages.content} order by ${coachChatMessages.createdAt} desc))[1]`,
+        lastMessageAt: sql<Date>`max(${coachChatMessages.createdAt})`,
+      })
+      .from(coachChatMessages)
+      .where(
+        and(
+          eq(coachChatMessages.userId, user.id),
+          sql`${coachChatMessages.workoutLogId} is not null`,
+        ),
+      )
+      .groupBy(coachChatMessages.workoutLogId)
+      .orderBy(sql`max(${coachChatMessages.createdAt}) desc`)
+      .limit(50);
+
+    // Hydrate workout log metadata for each thread
+    const logIds = rows.map((r) => r.workoutLogId).filter(Boolean) as string[];
+    if (logIds.length === 0) return [];
+
+    const logs = await db
+      .select({ id: workoutLogs.id, performedAt: workoutLogs.performedAt, type: workoutLogs.type })
+      .from(workoutLogs)
+      .where(inArray(workoutLogs.id, logIds));
+
+    const logMap = new Map(logs.map((l) => [l.id, l]));
+
+    return rows
+      .map((r) => {
+        const log = logMap.get(r.workoutLogId!);
+        if (!log) return null;
+        return {
+          workoutLogId: r.workoutLogId!,
+          performedAt: log.performedAt,
+          workoutType: log.type,
+          messageCount: r.messageCount,
+          lastMessage: r.lastMessage,
+          lastMessageAt: r.lastMessageAt,
+        };
+      })
+      .filter(Boolean) as ChatThread[];
+  } catch (err) {
+    console.error("getChatThreads error:", err);
+    return [];
   }
 }

@@ -45,6 +45,7 @@ export interface HomeClientProps {
   freezeActive: boolean;
   freezeReason: string | null;
   loggedToday: boolean;
+  todayLogCount: number;
   aiSummary: string | null;
   workoutLogId: string | null;
   fitYesterday: { steps: number | null; activeMinutes: number | null } | null;
@@ -58,6 +59,7 @@ export default function HomeClient({
   freezeActive: _freezeActive,
   freezeReason: _freezeReason,
   loggedToday,
+  todayLogCount,
   aiSummary,
   workoutLogId: initialWorkoutLogId,
   fitYesterday,
@@ -151,16 +153,24 @@ export default function HomeClient({
   const handleDoneBack = useCallback(() => {
     setState("pre-workout");
     setRunEndData(null);
+    // Reset workout context so a follow-up log starts fresh (Bug #2 guard)
+    setWorkoutLogId(null);
+    setWorkoutResult(null);
   }, []);
 
   const handleDoneChat = useCallback(
-    async (message: string) => {
-      if (!workoutLogId) return;
+    async (message: string): Promise<string> => {
+      if (!workoutLogId) return "";
       try {
         const response = await coachChatTurn(message, workoutLogId);
-        if ("error" in response) console.error("Chat error:", response.error);
+        if ("error" in response) {
+          console.error("Chat error:", response.error);
+          return "Sorry, something went wrong. Please try again.";
+        }
+        return response.reply;
       } catch (error) {
         console.error("Error sending chat message:", error);
+        return "Sorry, something went wrong. Please try again.";
       }
     },
     [workoutLogId],
@@ -176,6 +186,7 @@ export default function HomeClient({
           greetingKey={greetingKey}
           todayPlan={todayPlan}
           loggedToday={loggedToday}
+          todayLogCount={todayLogCount}
           aiSummary={aiSummary}
           onLogManual={handleLogManual}
           onStartRun={handleStartRun}
