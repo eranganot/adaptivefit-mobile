@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { CheckCircle, AlertCircle, Circle, AlertTriangle } from "lucide-react";
 import type { RoadmapSession } from "@/app/(app)/roadmap/data";
@@ -10,7 +11,10 @@ interface RoadmapViewProps {
 
 export function RoadmapView({ sessions }: RoadmapViewProps) {
   const t = useTranslations("roadmap");
-  const dir = document.documentElement.dir || "ltr";
+  const [dir, setDir] = useState<"ltr" | "rtl">("ltr");
+  useEffect(() => {
+    setDir((document.documentElement.dir as "ltr" | "rtl") || "ltr");
+  }, []);
 
   if (sessions.length === 0) {
     return (

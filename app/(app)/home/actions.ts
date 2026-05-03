@@ -129,9 +129,17 @@ export async function logManualWorkout(input: {
       }
     }
 
-    // 5. Gemini post-workout summary
+    // 5. Gemini post-workout summary (non-fatal — workout is already saved)
     const recentRpe = recentRaw.map((l) => l.rpe).slice(0, 7);
-    const { summary, adjustments } = await summarizePostWorkout({ rpe, footPain, notes, currentLevel, recentRpe });
+    let summary = "Workout logged! Keep monitoring your effort and pain levels.";
+    let adjustments = ["Stay consistent with your training schedule.", "Rest when your body needs it."];
+    try {
+      const sumResult = await summarizePostWorkout({ rpe, footPain, notes, currentLevel, recentRpe });
+      summary = sumResult.summary;
+      adjustments = sumResult.adjustments;
+    } catch (e) {
+      console.error("summarizePostWorkout non-fatal:", e);
+    }
 
     revalidatePath("/home");
     revalidatePath("/roadmap");

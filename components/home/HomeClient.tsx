@@ -9,6 +9,7 @@ import PreWorkout from "./PreWorkout";
 import PostWorkout from "./PostWorkout";
 import Analyzing from "./Analyzing";
 import DoneState from "./DoneState";
+import { ColdStartReviewModal } from "@/components/coldstart/ColdStartReviewModal";
 import dynamic from "next/dynamic";
 
 // Lazy-load GPS-heavy screens — they import mapbox which is large
@@ -49,6 +50,9 @@ export interface HomeClientProps {
   aiSummary: string | null;
   workoutLogId: string | null;
   fitYesterday: { steps: number | null; activeMinutes: number | null } | null;
+  nextSession: { title: string; date: Date; plan: SessionPlan } | null;
+  lastChatMessages: { role: string; content: string }[];
+  pendingColdStart: { id: string; recommendedLevel: number; rationale: string } | null;
 }
 
 export default function HomeClient({
@@ -63,18 +67,25 @@ export default function HomeClient({
   aiSummary,
   workoutLogId: initialWorkoutLogId,
   fitYesterday,
+  nextSession,
+  lastChatMessages,
+  pendingColdStart: initialPendingColdStart,
 }: HomeClientProps) {
   const [state, setState] = useState<HomeState>("pre-workout");
   const [workoutResult, setWorkoutResult] = useState<WorkoutResult | null>(null);
   const [workoutLogId, setWorkoutLogId] = useState<string | null>(initialWorkoutLogId);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [runEndData, setRunEndData] = useState<RunEndData | null>(null);
   // Pre-filled RPE for post-workout form when coming from GPS run (default Moderate = 5)
   const [prefillRpe, setPrefillRpe] = useState<number | undefined>(undefined);
+  // Cold-start modal (Bug #8)
+  const [pendingColdStart, setPendingColdStart] = useState(initialPendingColdStart);
 
   // ── Manual log flow ───────────────────────────────────────────
   const handleLogManual = useCallback(() => {
     setPrefillRpe(undefined);
+    setSubmitError(null);
     setState("post-workout");
   }, []);
 
@@ -122,6 +133,7 @@ export default function HomeClient({
       photo: File | null;
     }) => {
       setIsSubmitting(true);
+      setSubmitError(null);
       try {
         setState("analyzing");
         const result = await logManualWorkout({
@@ -134,10 +146,12 @@ export default function HomeClient({
           setState("done");
         } else {
           console.error("Failed to log workout:", result.error);
+          setSubmitError("Couldn't save your workout. Please try again.");
           setState("post-workout");
         }
       } catch (error) {
         console.error("Error submitting workout:", error);
+        setSubmitError("Something went wrong. Please try again.");
         setState("post-workout");
       } finally {
         setIsSubmitting(false);
@@ -180,6 +194,16 @@ export default function HomeClient({
 
   return (
     <div className="space-y-4">
+      {/* Cold-start recommendation modal (Bug #8) */}
+      {pendingColdStart && (
+        <ColdStartReviewModal
+          coldStartId={pendingColdStart.id}
+          recommendedLevel={pendingColdStart.recommendedLevel}
+          rationale={pendingColdStart.rationale}
+          onDone={() => setPendingColdStart(null)}
+        />
+      )}
+
       {state === "pre-workout" && (
         <PreWorkout
           name={name}
@@ -191,6 +215,8 @@ export default function HomeClient({
           onLogManual={handleLogManual}
           onStartRun={handleStartRun}
           fitYesterday={fitYesterday}
+          nextSession={nextSession}
+          lastChatMessages={lastChatMessages}
         />
       )}
 
@@ -208,12 +234,19 @@ export default function HomeClient({
       )}
 
       {state === "post-workout" && (
-        <PostWorkout
-          isSubmitting={isSubmitting}
-          prefillRpe={prefillRpe}
-          onSubmit={handlePostWorkoutSubmit}
-          onCancel={handlePostWorkoutCancel}
-        />
+        <>
+          {submitError && (
+            <div className="rounded-2xl bg-rose-50 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-400">
+              {submitError}
+            </div>
+          )}
+          <PostWorkout
+            isSubmitting={isSubmitting}
+            prefillRpe={prefillRpe}
+            onSubmit={handlePostWorkoutSubmit}
+            onCancel={handlePostWorkoutCancel}
+          />
+        </>
       )}
 
       {state === "analyzing" && <Analyzing />}

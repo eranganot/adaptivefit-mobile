@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MessageSquare, ChevronRight } from "lucide-react";
+import { MessageSquare, ChevronRight, ArrowRight } from "lucide-react";
 import type { ChatThread } from "@/app/(app)/home/actions";
 
 interface ChatListProps {
@@ -16,16 +16,23 @@ function formatDate(d: Date): string {
 export function ChatList({ threads }: ChatListProps) {
   if (threads.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
+      <div className="flex flex-col items-center justify-center py-16 text-center px-4">
         <div className="h-14 w-14 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center mb-4">
           <MessageSquare className="h-7 w-7 text-indigo-600 dark:text-indigo-400" />
         </div>
-        <p className="text-base font-semibold text-gray-900 dark:text-white mb-1">
+        <p className="text-base font-semibold text-gray-900 dark:text-white mb-2">
           No conversations yet
         </p>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Log a workout and chat with your coach — threads will appear here.
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+          Log a workout on the Home tab, then tap &ldquo;Continue Chat&rdquo; to start talking to your coach.
         </p>
+        <Link
+          href="/home"
+          className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
+        >
+          Go log a workout
+          <ArrowRight className="h-4 w-4" />
+        </Link>
       </div>
     );
   }

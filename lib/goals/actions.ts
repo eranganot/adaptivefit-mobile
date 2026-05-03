@@ -9,11 +9,21 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 const SaveGoalSchema = z.object({
-  type: z.enum(["5k_time", "10k_time", "weekly_volume_km", "sessions_per_week", "custom"]),
+  category: z.enum(["running", "body_shape", "weight_loss", "strength"]).default("running"),
+  type: z.enum(["5k_time", "10k_time", "weekly_volume_km", "sessions_per_week", "custom"]).default("custom"),
   targetValue: z.number().positive(),
-  targetUnit: z.enum(["sec", "km", "sessions", "free"]),
+  targetUnit: z.enum(["sec", "km", "sessions", "free", "kg", "pct"]),
   targetDate: z.string().min(1, "Target date is required"),
   note: z.string().optional(),
+  // Bug #6 extras
+  trainingMixPct: z.number().int().min(0).max(100).optional(),
+  currentValue: z.number().optional(),
+  targetLifts: z.object({
+    bench5rm: z.number().optional(),
+    squat5rm: z.number().optional(),
+    deadlift5rm: z.number().optional(),
+  }).optional(),
+  sessionsPerWeek: z.number().int().min(1).max(7).optional(),
 });
 
 export type SaveGoalInput = z.infer<typeof SaveGoalSchema>;
@@ -41,12 +51,17 @@ export async function saveGoal(
     // Insert new active goal
     await db.insert(goals).values({
       userId: user.id,
+      category: validated.category,
       type: validated.type,
       targetValue: validated.targetValue.toString(),
       targetUnit: validated.targetUnit,
       targetDate: validated.targetDate,
       note: validated.note || null,
       status: "active",
+      trainingMixPct: validated.trainingMixPct ?? null,
+      currentValue: validated.currentValue != null ? validated.currentValue.toString() : null,
+      targetLifts: validated.targetLifts ?? null,
+      sessionsPerWeek: validated.sessionsPerWeek ?? null,
     });
 
     revalidatePath("/home");

@@ -77,6 +77,11 @@
     "statusCompleted": "Completed",
     "statusAdjusted": "Adjusted",
     "statusPlanned": "Planned",
+    "status": {
+      "completed": "Completed",
+      "adjusted": "Adjusted",
+      "planned": "Planned"
+    },
     "adjustedNote": "Plan adjusted by coach",
     "emptyState": "No sessions scheduled yet",
     "emptyStateSub": "Log a workout to generate your roadmap",

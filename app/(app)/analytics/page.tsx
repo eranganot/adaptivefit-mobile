@@ -2,7 +2,8 @@ import { getTranslations } from "next-intl/server";
 import { getAnalyticsData } from "./data";
 import { VolumeChart } from "@/components/analytics/VolumeChart";
 import { TrendChart } from "@/components/analytics/TrendChart";
-import { TrendingUp, TrendingDown, Minus, Footprints } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Footprints, Scale, Activity, Dumbbell } from "lucide-react";
+import type { GoalCategory } from "./data";
 
 function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
   if (ideal) {
@@ -31,6 +32,28 @@ function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
   );
 }
 
+function GoalPlaceholderCard({
+  icon,
+  title,
+  description,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900 flex items-start gap-4">
+      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100 dark:bg-indigo-900/30">
+        {icon}
+      </div>
+      <div>
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
 export default async function AnalyticsPage() {
   const t = await getTranslations("analytics");
   const data = await getAnalyticsData();
@@ -44,7 +67,7 @@ export default async function AnalyticsPage() {
     );
   }
 
-  const { sessions, weekly, coachLevel, freezeActive, avgRpe, fitSteps7dAvg } = data;
+  const { sessions, weekly, coachLevel, freezeActive, avgRpe, fitSteps7dAvg, activeGoalCategory } = data;
 
   // Stat tile calculations
   const currentWeekKm = weekly[weekly.length - 1]?.km ?? 0;
@@ -103,29 +126,89 @@ export default async function AnalyticsPage() {
         )}
       </div>
 
-      {/* ── RPE vs Pace dual-axis chart ────────────────────────────── */}
-      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-        <p className="mb-1 text-sm font-semibold">{t("chart.rpePace")}</p>
-        <p className="mb-4 text-[11px] text-muted-foreground">
-          <span className="inline-block h-2 w-4 rounded-full bg-blue-600 align-middle" /> RPE &nbsp;
-          <span className="inline-block h-2 w-4 rounded-full bg-red-600 align-middle" /> Pace
-        </p>
-        {sessions.filter((s) => s.type === "run").length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">{t("noRuns")}</p>
-        ) : (
-          <TrendChart data={sessions} />
-        )}
-      </div>
+      {/* ── Goal-specific analytics ────────────────────────────────── */}
+      {activeGoalCategory === "running" && (
+        <>
+          {/* RPE vs Pace dual-axis chart */}
+          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <p className="mb-1 text-sm font-semibold">{t("chart.rpePace")}</p>
+            <p className="mb-4 text-[11px] text-muted-foreground">
+              <span className="inline-block h-2 w-4 rounded-full bg-blue-600 align-middle" /> RPE &nbsp;
+              <span className="inline-block h-2 w-4 rounded-full bg-red-600 align-middle" /> Pace
+            </p>
+            {sessions.filter((s) => s.type === "run").length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">{t("noRuns")}</p>
+            ) : (
+              <TrendChart data={sessions} />
+            )}
+          </div>
 
-      {/* ── Weekly distance bar chart ──────────────────────────────── */}
-      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-        <p className="mb-1 text-sm font-semibold">{t("chart.weeklyVol")}</p>
-        {sessions.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
-        ) : (
-          <VolumeChart data={weekly} />
-        )}
-      </div>
+          {/* Weekly distance bar chart */}
+          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <p className="mb-1 text-sm font-semibold">{t("chart.weeklyVol")}</p>
+            {sessions.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
+            ) : (
+              <VolumeChart data={weekly} />
+            )}
+          </div>
+        </>
+      )}
+
+      {activeGoalCategory === "weight_loss" && (
+        <>
+          <GoalPlaceholderCard
+            icon={<Scale className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
+            title="Weight Progress"
+            description="Log your weight weekly in Settings → Goal to track your progress here. Chart coming soon."
+          />
+          {/* Still show weekly sessions volume */}
+          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <p className="mb-1 text-sm font-semibold">Weekly Workout Volume</p>
+            {sessions.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
+            ) : (
+              <VolumeChart data={weekly} />
+            )}
+          </div>
+        </>
+      )}
+
+      {activeGoalCategory === "body_shape" && (
+        <>
+          <GoalPlaceholderCard
+            icon={<Activity className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
+            title="Body Composition Tracking"
+            description="Body fat % and training mix charts are coming soon. Keep logging your workouts to build your trend."
+          />
+          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <p className="mb-1 text-sm font-semibold">Weekly Workout Volume</p>
+            {sessions.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
+            ) : (
+              <VolumeChart data={weekly} />
+            )}
+          </div>
+        </>
+      )}
+
+      {activeGoalCategory === "strength" && (
+        <>
+          <GoalPlaceholderCard
+            icon={<Dumbbell className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
+            title="Strength Progress"
+            description="Lift PR tracking (bench, squat, deadlift) is coming soon. Log your sessions to build history."
+          />
+          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <p className="mb-1 text-sm font-semibold">Weekly Workout Volume</p>
+            {sessions.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
+            ) : (
+              <VolumeChart data={weekly} />
+            )}
+          </div>
+        </>
+      )}
 
       {/* ── Coach level ────────────────────────────────────────────── */}
       <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">

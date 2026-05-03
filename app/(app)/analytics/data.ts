@@ -7,7 +7,7 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users, fitDailyMetrics } from "@/lib/db/schema";
+import { workoutLogs, userLevelState, users, fitDailyMetrics, goals } from "@/lib/db/schema";
 import { eq, sql, and, gte, asc } from "drizzle-orm";
 
 export type WeeklyBucket = {
@@ -26,6 +26,8 @@ export type SessionPoint = {
   rtl: number; // Relative Training Load = km × (rpe/10)
 };
 
+export type GoalCategory = "running" | "body_shape" | "weight_loss" | "strength";
+
 export type AnalyticsData = {
   weekly: WeeklyBucket[];
   sessions: SessionPoint[];
@@ -36,6 +38,11 @@ export type AnalyticsData = {
   avgRpe: number;
   peakWeekKm: number;
   fitSteps7dAvg: number | null; // null = Fit not connected
+  activeGoalCategory: GoalCategory;
+  activeGoalTargetValue: number | null;
+  activeGoalTargetUnit: string | null;
+  activeGoalTargetDate: string | null;
+  activeGoalCurrentValue: number | null;
 };
 
 function fmtWeekLabel(d: Date): string {
@@ -58,7 +65,7 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const sevenDaysAgoDate = sevenDaysAgo.toISOString().slice(0, 10);
 
-  const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics] = await Promise.all([
+  const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics, activeGoal] = await Promise.all([
     // ── 12-week weekly volume buckets (typed Drizzle select) ───────────────
     db
       .select({
@@ -106,6 +113,12 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       .select({ steps: fitDailyMetrics.steps })
       .from(fitDailyMetrics)
       .where(and(eq(fitDailyMetrics.userId, user.id), gte(fitDailyMetrics.date, sevenDaysAgoDate))),
+
+    // ── Active goal (for analytics branching) ─────────────────────────────
+    db.query.goals.findFirst({
+      where: and(eq(goals.userId, user.id), eq(goals.status, "active")),
+      orderBy: (g, { desc }) => [desc(g.createdAt)],
+    }),
   ]);
 
   // Shape weekly buckets — fill missing weeks with 0
@@ -180,5 +193,10 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     avgRpe,
     peakWeekKm: Math.round(peakWeekKm * 10) / 10,
     fitSteps7dAvg,
+    activeGoalCategory: (activeGoal?.category ?? "running") as GoalCategory,
+    activeGoalTargetValue: activeGoal?.targetValue ? parseFloat(activeGoal.targetValue) : null,
+    activeGoalTargetUnit: activeGoal?.targetUnit ?? null,
+    activeGoalTargetDate: activeGoal?.targetDate ?? null,
+    activeGoalCurrentValue: activeGoal?.currentValue ? parseFloat(activeGoal.currentValue) : null,
   };
 }

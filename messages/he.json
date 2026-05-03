@@ -77,6 +77,11 @@
     "statusCompleted": "הושלם",
     "statusAdjusted": "הותאם",
     "statusPlanned": "מתוכנן",
+    "status": {
+      "completed": "הושלם",
+      "adjusted": "הותאם",
+      "planned": "מתוכנן"
+    },
     "adjustedNote": "תוכנית הותאמה על ידי המאמן",
     "emptyState": "אין אימונים מתוכננים עדיין",
     "emptyStateSub": "תעד אימון כדי ליצור את מפת הדרכים שלך",

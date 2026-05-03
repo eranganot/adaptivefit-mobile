@@ -93,32 +93,18 @@ Recommend a starting level (respond with JSON only):
     else if (totalDistanceKm > 5) recommendedLevel = 2;
   }
 
-  // Persist to cold_start_analysis
+  // Persist to cold_start_analysis with status 'pending' — user must accept/override via UI
   await db.insert(coldStartAnalysis).values({
     userId,
     source: "gemini_import",
     rawInput: summary,
     extracted: { recommendedLevel, rationale, avgSteps, totalDistanceKm, avgHr },
+    recommendedLevel,
+    status: "pending",
   }).onConflictDoNothing();
 
-  // Pre-fill user_level_state only if no existing evaluation
-  const existingState = await db.query.userLevelState.findFirst({
-    where: eq(userLevelState.userId, userId),
-  });
-  if (!existingState) {
-    await db.insert(userLevelState).values({
-      userId,
-      currentLevel: recommendedLevel,
-      greenSessionCount: 0,
-      freezeActive: false,
-    });
-  }
-  // If state exists but was never user-confirmed (lastEvaluatedAt is null), update the level
-  else if (!existingState.lastEvaluatedAt) {
-    await db.update(userLevelState)
-      .set({ currentLevel: recommendedLevel })
-      .where(eq(userLevelState.userId, userId));
-  }
+  // NOTE: We deliberately do NOT auto-apply to userLevelState here.
+  // The acceptColdStart server action does that once the user reviews the recommendation.
 
   return { recommendedLevel, rationale };
 }

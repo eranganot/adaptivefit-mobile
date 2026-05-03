@@ -1,8 +1,8 @@
 import { db } from "@/lib/db";
 import { trainingRoadmap, workoutLogs, goals } from "@/lib/db/schema";
-import { eq, and, gte, desc, lte } from "drizzle-orm";
-import { evaluateCoach } from "@/lib/coach";
-import type { SessionPlan, SessionBlock, CoachInputs } from "@/lib/coach";
+import { eq, and, gte, lte, desc } from "drizzle-orm";
+import type { SessionPlan, SessionBlock } from "@/lib/coach";
+import { regenerateRoadmapForUser } from "@/lib/roadmap/regenerate";
 
 export type RoadmapSession = {
   id: string;
@@ -57,9 +57,15 @@ export async function getRoadmapData(userId: string): Promise<{
     )
     .orderBy(trainingRoadmap.weekIndex, trainingRoadmap.dayIndex);
 
-  // 4. If no roadmap exists, seed it
-  if (roadmapRows.length === 0) {
-    await seedRoadmap(userId, activeGoal?.id ?? null);
+  // 4. Regenerate if: no roadmap exists OR all existing sessions are in the past
+  const needsRegen = roadmapRows.length === 0 || roadmapRows.every((row) => {
+    const sessionDate = new Date(startOfWeek);
+    sessionDate.setDate(startOfWeek.getDate() + row.weekIndex * 7 + row.dayIndex);
+    return sessionDate < today;
+  });
+
+  if (needsRegen) {
+    await regenerateRoadmapForUser(userId);
     roadmapRows = await db
       .select()
       .from(trainingRoadmap)
@@ -130,68 +136,6 @@ export async function getRoadmapData(userId: string): Promise<{
   };
 }
 
-async function seedRoadmap(userId: string, goalId: string | null): Promise<void> {
-  // Get recent logs and current state for coach evaluation
-  const last14Days = new Date();
-  last14Days.setDate(last14Days.getDate() - 14);
-
-  const recentLogs = await db
-    .select()
-    .from(workoutLogs)
-    .where(and(eq(workoutLogs.userId, userId), gte(workoutLogs.performedAt, last14Days)))
-    .orderBy(desc(workoutLogs.performedAt))
-    .limit(20);
-
-  const userState: CoachInputs["state"] = {
-    currentLevel: 1,
-    greenSessionCount: 0,
-    freezeActive: false,
-    freezeReason: null,
-  };
-
-  // Generate 2 weeks of sessions: days 1 and 4 (Tue/Fri pattern)
-  const sessionsToCreate = [];
-
-  for (let weekIdx = 0; weekIdx < 2; weekIdx++) {
-    // Tuesday (day 1)
-    const tuePlan = evaluateCoach({
-      recentLogs,
-      state: userState,
-      today: new Date(),
-    }).todayPlan;
-
-    sessionsToCreate.push({
-      userId,
-      goalId,
-      weekIndex: weekIdx,
-      dayIndex: 1, // Tuesday
-      sessionPlan: tuePlan,
-      status: "pending" as const,
-      createdAt: new Date(),
-    });
-
-    // Friday (day 4)
-    const friPlan = evaluateCoach({
-      recentLogs,
-      state: userState,
-      today: new Date(),
-    }).todayPlan;
-
-    sessionsToCreate.push({
-      userId,
-      goalId,
-      weekIndex: weekIdx,
-      dayIndex: 4, // Friday
-      sessionPlan: friPlan,
-      status: "pending" as const,
-      createdAt: new Date(),
-    });
-  }
-
-  if (sessionsToCreate.length > 0) {
-    await db.insert(trainingRoadmap).values(sessionsToCreate);
-  }
-}
 
 function formatBlockLabel(block: SessionBlock): string {
   switch (block.kind) {

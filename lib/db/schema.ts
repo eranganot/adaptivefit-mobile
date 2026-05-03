@@ -57,18 +57,30 @@ export const goals = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    // High-level category (Bug #6 Phase 1)
+    category: text("category", {
+      enum: ["running", "body_shape", "weight_loss", "strength"],
+    }).notNull().default("running"),
     type: text("type", {
       enum: ["5k_time", "10k_time", "weekly_volume_km", "sessions_per_week", "custom"],
     }).notNull(),
     targetValue: numeric("target_value", { precision: 10, scale: 2 }).notNull(),
     targetUnit: text("target_unit", {
-      enum: ["sec", "km", "sessions", "free"],
+      enum: ["sec", "km", "sessions", "free", "kg", "pct"],
     }).notNull(),
     targetDate: date("target_date").notNull(),
     note: text("note"),
     status: text("status", { enum: ["active", "achieved", "archived"] })
       .notNull()
       .default("active"),
+    // Body-shape / strength: user-set training mix (0-100, e.g. 60 = 60% primary modality)
+    trainingMixPct: integer("training_mix_pct"),
+    // Weight-loss: user's current actual weight (kg) at goal-creation time
+    currentValue: numeric("current_value", { precision: 10, scale: 2 }),
+    // Strength: target lifts as JSON {bench5rm, squat5rm, deadlift5rm}
+    targetLifts: jsonb("target_lifts"),
+    // Sessions per week target (used by all categories)
+    sessionsPerWeek: integer("sessions_per_week"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -78,6 +90,42 @@ export const goals = pgTable(
       .where(sql`${t.status} = 'active'`),
   }),
 );
+
+// ─────────────────────────────────────────────────────────────────
+// body_metrics — weight / body-fat measurements (Bug #6 Phase 2)
+// ─────────────────────────────────────────────────────────────────
+export const bodyMetrics = pgTable(
+  "body_metrics",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    date: date("date").notNull(), // YYYY-MM-DD
+    weightKg: numeric("weight_kg", { precision: 5, scale: 2 }),
+    bodyFatPct: numeric("body_fat_pct", { precision: 4, scale: 1 }),
+    waistCm: numeric("waist_cm", { precision: 5, scale: 1 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userDateIdx: uniqueIndex("body_metrics_user_date_idx").on(t.userId, t.date),
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────
+// strength_logs — per-exercise lift records linked to a workout (Bug #6 Phase 2)
+// ─────────────────────────────────────────────────────────────────
+export const strengthLogs = pgTable("strength_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workoutLogId: uuid("workout_log_id")
+    .notNull()
+    .references(() => workoutLogs.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  exercise: text("exercise").notNull(), // e.g. "bench_press", "squat", "deadlift"
+  weightKg: numeric("weight_kg", { precision: 5, scale: 2 }).notNull(),
+  reps: integer("reps").notNull(),
+  sets: integer("sets").notNull().default(1),
+  rpe: integer("rpe"), // optional effort rating for this lift
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ─────────────────────────────────────────────────────────────────
 // workout_logs
@@ -144,6 +192,9 @@ export const userLevelState = pgTable("user_level_state", {
   freezeReason: text("freeze_reason"),
   // ISO date of last evaluation; coach skips re-running the same day
   lastEvaluatedAt: timestamp("last_evaluated_at", { withTimezone: true }),
+  // Manual override: gates FSM promotions for 7 days after user sets a level manually
+  manualOverride: boolean("manual_override").notNull().default(false),
+  manualOverrideUntil: timestamp("manual_override_until", { withTimezone: true }),
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -175,6 +226,12 @@ export const coldStartAnalysis = pgTable("cold_start_analysis", {
   }).notNull(),
   rawInput: text("raw_input").notNull(),
   extracted: jsonb("extracted").notNull(),
+  // Recommendation tracking — user must explicitly accept or override
+  recommendedLevel: integer("recommended_level"),
+  acceptedLevel: integer("accepted_level"),
+  status: text("status", { enum: ["pending", "accepted", "overridden"] })
+    .notNull()
+    .default("pending"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -335,6 +392,10 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Goal = typeof goals.$inferSelect;
 export type NewGoal = typeof goals.$inferInsert;
+export type BodyMetric = typeof bodyMetrics.$inferSelect;
+export type NewBodyMetric = typeof bodyMetrics.$inferInsert;
+export type StrengthLog = typeof strengthLogs.$inferSelect;
+export type NewStrengthLog = typeof strengthLogs.$inferInsert;
 export type WorkoutLog = typeof workoutLogs.$inferSelect;
 export type NewWorkoutLog = typeof workoutLogs.$inferInsert;
 export type FeedbackSentiment = typeof feedbackSentiment.$inferSelect;

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Sparkles, Zap, ClipboardList, Footprints, Timer, History } from "lucide-react";
+import { Sparkles, Zap, ClipboardList, Footprints, Timer, History, CalendarCheck, MessageSquare } from "lucide-react";
 import type { SessionPlan } from "@/lib/coach";
 import { RecentWorkoutsSheet } from "@/components/workouts/RecentWorkoutsSheet";
 
@@ -17,6 +17,8 @@ interface PreWorkoutProps {
   onLogManual: () => void;
   onStartRun: () => void;
   fitYesterday: { steps: number | null; activeMinutes: number | null } | null;
+  nextSession: { title: string; date: Date; plan: SessionPlan } | null;
+  lastChatMessages: { role: string; content: string }[];
 }
 
 function formatRunBlockPace(paceSecPerKm: number): string {
@@ -35,6 +37,8 @@ export default function PreWorkout({
   onLogManual,
   onStartRun,
   fitYesterday,
+  nextSession,
+  lastChatMessages,
 }: PreWorkoutProps) {
   const t = useTranslations();
   const router = useRouter();
@@ -158,6 +162,64 @@ export default function PreWorkout({
         <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
           {aiSummary}
         </div>
+      )}
+
+      {/* Next workout card (Bug #4 — shown after logging today) */}
+      {loggedToday && nextSession && (
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <CalendarCheck className="h-4 w-4 text-indigo-500" />
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Next workout · {new Date(nextSession.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+            </p>
+          </div>
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {nextSession.title}
+          </p>
+        </div>
+      )}
+
+      {/* Chat preview (Bug #4 — shows last messages from coach) */}
+      {lastChatMessages.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-2">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-slate-400" />
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Coach
+              </p>
+            </div>
+            <button
+              onClick={() => router.push("/coach")}
+              className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+            >
+              Open →
+            </button>
+          </div>
+          {lastChatMessages.map((msg, idx) => (
+            <div
+              key={idx}
+              className={`text-xs rounded-xl px-3 py-2 ${
+                msg.role === "user"
+                  ? "bg-indigo-50 dark:bg-indigo-900/20 text-indigo-800 dark:text-indigo-300 ml-6"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+              }`}
+            >
+              {msg.content.length > 120 ? msg.content.slice(0, 120) + "…" : msg.content}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Chat entry point when no messages yet and logged today */}
+      {loggedToday && lastChatMessages.length === 0 && (
+        <button
+          onClick={() => router.push("/coach")}
+          className="w-full flex items-center gap-2 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 px-4 py-3 text-sm text-slate-500 dark:text-slate-400 hover:border-indigo-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+        >
+          <MessageSquare className="h-4 w-4" />
+          Chat with your coach about today&apos;s workout
+        </button>
       )}
 
       {/* History access — always visible so users can edit/delete past logs */}

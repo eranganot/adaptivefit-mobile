@@ -13,9 +13,11 @@ export type CoachInputs = {
   /** Last 14 days of workout logs, newest-first */
   recentLogs: Array<WorkoutLog & { sentiment?: FeedbackSentiment | null }>;
   /** Current FSM state for the user */
-  state: Pick<UserLevelState, "currentLevel" | "greenSessionCount" | "freezeActive" | "freezeReason">;
+  state: Pick<UserLevelState, "currentLevel" | "greenSessionCount" | "freezeActive" | "freezeReason" | "manualOverride" | "manualOverrideUntil">;
   /** ISO date string for "today" — explicit so tests are deterministic */
   today: Date;
+  /** Hint for the session being planned: "quality" (Tue) or "endurance" (Fri). Default: "quality" */
+  sessionKind?: "quality" | "endurance";
 };
 
 export type SessionBlock =
@@ -58,8 +60,21 @@ export const TUNABLES = {
 // Evaluator — top-level orchestrator. First matching rule wins.
 // ───────────────────────────────────────────────────────────────────
 export function evaluateCoach(inputs: CoachInputs): CoachResult {
-  const { recentLogs, state, today } = inputs;
+  const { recentLogs, state, today, sessionKind = "quality" } = inputs;
   const rulesApplied: string[] = [];
+
+  // Rule 0: manual override — if user set a level manually and window is still open,
+  // lock the level and skip all FSM promotions/demotions.
+  const overrideActive =
+    state.manualOverride &&
+    state.manualOverrideUntil != null &&
+    new Date(state.manualOverrideUntil) > today;
+  if (overrideActive) {
+    rulesApplied.push("manual_override_active");
+    // Still plan a session at the locked level, but skip all FSM transitions
+    const plan = buildSessionForLevel(state.currentLevel ?? 1, sessionKind, "Manual level lock — planning at your chosen level.");
+    return makeResult(state, plan, rulesApplied, {});
+  }
 
   // Rule 1: hard freeze on any pain >= 7 in last 7 days
   const sevenDaysAgo = new Date(today);
@@ -208,14 +223,45 @@ function reduceIntervalLength(lastRun: WorkoutLog, rationale: string): SessionPl
 }
 
 function promotedSession(newLevel: number, rationale: string): SessionPlan {
-  // Very simple progression — extend block by 20% over level-1 base
+  return buildSessionForLevel(newLevel, "quality", rationale);
+}
+
+/**
+ * Build a session plan for a given level and kind.
+ * quality (Tue) = shorter intervals with recovery
+ * endurance (Fri) = longer continuous run
+ */
+export function buildSessionForLevel(
+  level: number,
+  kind: "quality" | "endurance",
+  rationale: string,
+): SessionPlan {
   const baseDistance = 1.5;
-  const distance = baseDistance * (1 + 0.2 * (newLevel - 1));
+  const distance = Math.round((baseDistance * (1 + 0.2 * (level - 1))) * 10) / 10;
+  // Pace improves slightly with level: starts at 7:30/km, improves 5s per level
+  const paceSecPerKm = Math.max(360, 450 - (level - 1) * 5);
+
+  if (kind === "endurance") {
+    // Continuous run at comfortable pace — longer distance, no reps
+    const enduranceDist = Math.round(distance * 1.5 * 10) / 10;
+    const endurancePace = paceSecPerKm + 15; // slightly slower for endurance
+    return {
+      title: `${enduranceDist.toFixed(1)} km Easy Run`,
+      blocks: [
+        { kind: "warmup", durationMin: 5 },
+        { kind: "run_block", distanceKm: enduranceDist, paceSecPerKm: endurancePace, reps: 1, recoverySec: 0 },
+        { kind: "mobility", exercises: ["Bird-Dog", "Plank", "Plantar Massage (ice bottle)"] },
+      ],
+      rationale,
+    };
+  }
+
+  // Quality session: intervals
   return {
-    title: `Level ${newLevel}: 3 × ${distance.toFixed(1)} km blocks @ 7:00 min/km`,
+    title: `Level ${level}: 3 × ${distance.toFixed(1)} km @ ${formatPace(paceSecPerKm)} /km`,
     blocks: [
       { kind: "warmup", durationMin: 6 },
-      { kind: "run_block", distanceKm: distance, paceSecPerKm: 420, reps: 3, recoverySec: 120 },
+      { kind: "run_block", distanceKm: distance, paceSecPerKm, reps: 3, recoverySec: 120 },
       { kind: "mobility", exercises: ["Bird-Dog", "Plank", "Superman", "Push-ups"] },
     ],
     rationale,
@@ -241,6 +287,8 @@ function makeResult(
     freezeActive: prev.freezeActive ?? false,
     freezeReason: prev.freezeReason ?? null,
     lastEvaluatedAt: new Date(),
+    manualOverride: prev.manualOverride ?? false,
+    manualOverrideUntil: prev.manualOverrideUntil ?? null,
     ...delta,
   } as UserLevelState;
   return { newState, todayPlan, rulesApplied };

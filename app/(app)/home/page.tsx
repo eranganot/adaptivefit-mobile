@@ -1,10 +1,12 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users, feedbackSentiment } from "@/lib/db/schema";
-import { eq, desc, gte, and, inArray, count } from "drizzle-orm";
+import { workoutLogs, userLevelState, users, feedbackSentiment, trainingRoadmap, coachChatMessages } from "@/lib/db/schema";
+import { eq, desc, gte, and, inArray, count, gt } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
 import HomeClient from "@/components/home/HomeClient";
+import { getPendingColdStart } from "./coldStartActions";
+import type { SessionPlan } from "@/lib/coach";
 
 export default async function HomePage() {
   const session = await auth();
@@ -64,6 +66,67 @@ export default async function HomePage() {
     today: new Date(),
   });
 
+  // Next pending roadmap session (Bug #4: shown when already logged today)
+  let nextSession: { title: string; date: Date; plan: SessionPlan } | null = null;
+  if (loggedToday) {
+    try {
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const pendingRows = await db
+        .select()
+        .from(trainingRoadmap)
+        .where(
+          and(
+            eq(trainingRoadmap.userId, user.id),
+            eq(trainingRoadmap.status, "pending"),
+          ),
+        )
+        .orderBy(trainingRoadmap.weekIndex, trainingRoadmap.dayIndex)
+        .limit(5);
+
+      // Find the first session that is in the future
+      const todayDate = new Date();
+      todayDate.setHours(0, 0, 0, 0);
+      for (const row of pendingRows) {
+        const sessionDate = new Date(startOfWeek);
+        sessionDate.setDate(startOfWeek.getDate() + row.weekIndex * 7 + row.dayIndex);
+        if (sessionDate > todayDate) {
+          nextSession = {
+            title: (row.sessionPlan as SessionPlan).title,
+            date: sessionDate,
+            plan: row.sessionPlan as SessionPlan,
+          };
+          break;
+        }
+      }
+    } catch (e) {
+      console.error("nextSession non-fatal:", e);
+    }
+  }
+
+  // Last 2 coach messages for chat preview (Bug #4)
+  let lastChatMessages: { role: string; content: string }[] = [];
+  if (todayLog) {
+    try {
+      const msgs = await db
+        .select({ role: coachChatMessages.role, content: coachChatMessages.content })
+        .from(coachChatMessages)
+        .where(eq(coachChatMessages.workoutLogId, todayLog.id))
+        .orderBy(desc(coachChatMessages.createdAt))
+        .limit(2);
+      lastChatMessages = msgs.reverse();
+    } catch (e) {
+      console.error("lastChatMessages non-fatal:", e);
+    }
+  }
+
+  // Cold-start pending recommendation (Bug #8)
+  const pendingColdStart = await getPendingColdStart().catch(() => null);
+
   // Yesterday's Fit stats (shown only if Google Fit connected)
   let fitYesterday: { steps: number | null; activeMinutes: number | null } | null = null;
   try {
@@ -96,6 +159,9 @@ export default async function HomePage() {
       aiSummary={aiSummary}
       workoutLogId={todayLog?.id ?? null}
       fitYesterday={fitYesterday}
+      nextSession={nextSession}
+      lastChatMessages={lastChatMessages}
+      pendingColdStart={pendingColdStart}
     />
   );
 }
