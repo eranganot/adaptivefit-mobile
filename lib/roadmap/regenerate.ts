@@ -1,21 +1,20 @@
 import { db } from "@/lib/db";
-import { trainingRoadmap, workoutLogs, userLevelState } from "@/lib/db/schema";
+import { trainingRoadmap, workoutLogs, userLevelState, goals } from "@/lib/db/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
-import type { CoachInputs } from "@/lib/coach";
+import type { CoachInputs, GoalCategory } from "@/lib/coach";
 
 /**
  * Core regeneration logic — shared between the roadmap server action and
  * logManualWorkout (which triggers a regen after a freeze or level promotion).
  *
- * Deletes all pending roadmap rows for the user and generates 2 fresh weeks
- * of sessions (Tue/Fri pattern) based on the current coach state.
+ * Deletes all pending roadmap rows and generates 2 fresh weeks of sessions
+ * (Tue/Fri pattern) based on current coach state and active goal category.
  *
- * State is simulated forward across sessions so each session in the plan
- * builds on the previous one (progressive planning, Bug #3).
+ * State is simulated forward so each session builds on the previous one
+ * (progressive planning, Bug #3).
  */
 export async function regenerateRoadmapForUser(userId: string): Promise<void> {
-  // Delete pending rows for this user
   await db
     .delete(trainingRoadmap)
     .where(
@@ -25,23 +24,28 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
       ),
     );
 
-  // Pull recent logs for coach evaluation
   const last14Days = new Date();
   last14Days.setDate(last14Days.getDate() - 14);
 
-  const recentLogs = await db
-    .select()
-    .from(workoutLogs)
-    .where(and(eq(workoutLogs.userId, userId), gte(workoutLogs.performedAt, last14Days)))
-    .orderBy(desc(workoutLogs.performedAt))
-    .limit(20);
+  const [recentLogs, stateRow, activeGoal] = await Promise.all([
+    db
+      .select()
+      .from(workoutLogs)
+      .where(and(eq(workoutLogs.userId, userId), gte(workoutLogs.performedAt, last14Days)))
+      .orderBy(desc(workoutLogs.performedAt))
+      .limit(20),
 
-  // Read real user level state from DB (Bug #3 fix: was hardcoded to level 1)
-  const stateRow = await db.query.userLevelState.findFirst({
-    where: eq(userLevelState.userId, userId),
-  });
+    db.query.userLevelState.findFirst({
+      where: eq(userLevelState.userId, userId),
+    }),
 
-  // Simulated state: starts from DB state and evolves across sessions
+    db.query.goals.findFirst({
+      where: and(eq(goals.userId, userId), eq(goals.status, "active")),
+    }),
+  ]);
+
+  const goalCategory: GoalCategory = (activeGoal?.category ?? "running") as GoalCategory;
+
   let simulatedState: CoachInputs["state"] = stateRow
     ? {
         currentLevel: stateRow.currentLevel,
@@ -63,46 +67,42 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
   const sessionsToCreate = [];
 
   for (let weekIdx = 0; weekIdx < 2; weekIdx++) {
-    // Tuesday — quality session (intervals)
+    // Session 1 (Tue) — quality / push day
     const tueResult = evaluateCoach({
       recentLogs,
       state: simulatedState,
       today: new Date(),
       sessionKind: "quality",
+      goalCategory,
     });
     sessionsToCreate.push({
       userId,
-      goalId: null,
+      goalId: activeGoal?.id ?? null,
       weekIndex: weekIdx,
       dayIndex: 1, // Tuesday
       sessionPlan: tueResult.todayPlan,
       status: "pending" as const,
       createdAt: new Date(),
     });
-
-    // Advance simulated state: assume this session is completed cleanly
-    // (green session — RPE ≤ 7, pain ≤ 3), so greenSessionCount advances.
-    // This makes Friday's plan build on Tuesday's simulated outcome.
     simulatedState = advanceState(simulatedState, tueResult.newState);
 
-    // Friday — endurance session (longer continuous run)
+    // Session 2 (Fri) — endurance / pull+legs day
     const friResult = evaluateCoach({
       recentLogs,
       state: simulatedState,
       today: new Date(),
       sessionKind: "endurance",
+      goalCategory,
     });
     sessionsToCreate.push({
       userId,
-      goalId: null,
+      goalId: activeGoal?.id ?? null,
       weekIndex: weekIdx,
       dayIndex: 4, // Friday
       sessionPlan: friResult.todayPlan,
       status: "pending" as const,
       createdAt: new Date(),
     });
-
-    // Advance state again for next week's Tuesday
     simulatedState = advanceState(simulatedState, friResult.newState);
   }
 
@@ -111,19 +111,12 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
   }
 }
 
-/**
- * Advance simulated state by merging the FSM result.
- * If the session was green (FSM didn't freeze), increment greenSessionCount.
- * If FSM promoted, carry the new level.
- */
 function advanceState(
   prev: CoachInputs["state"],
   fsmResult: CoachInputs["state"],
 ): CoachInputs["state"] {
-  // If FSM froze, propagate the freeze
   if (fsmResult.freezeActive) return fsmResult;
 
-  // Otherwise simulate a clean session: bump greenSessionCount by 1
   const greens = Math.min((fsmResult.greenSessionCount ?? 0) + 1, 10);
   const promoted = greens >= 3 && (fsmResult.currentLevel ?? 1) < 10;
 

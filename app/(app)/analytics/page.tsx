@@ -2,6 +2,8 @@ import { getTranslations } from "next-intl/server";
 import { getAnalyticsData } from "./data";
 import { VolumeChart } from "@/components/analytics/VolumeChart";
 import { TrendChart } from "@/components/analytics/TrendChart";
+import { WeightTrendChart } from "@/components/analytics/WeightTrendChart";
+import { LiftProgressChart } from "@/components/analytics/LiftProgressChart";
 import { TrendingUp, TrendingDown, Minus, Footprints, Scale, Activity, Dumbbell } from "lucide-react";
 
 function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
@@ -31,27 +33,6 @@ function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
   );
 }
 
-function GoalPlaceholderCard({
-  icon,
-  title,
-  description,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900 flex items-start gap-4">
-      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100 dark:bg-indigo-900/30">
-        {icon}
-      </div>
-      <div>
-        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-      </div>
-    </div>
-  );
-}
 
 export default async function AnalyticsPage() {
   const t = await getTranslations("analytics");
@@ -66,7 +47,11 @@ export default async function AnalyticsPage() {
     );
   }
 
-  const { sessions, weekly, coachLevel, freezeActive, avgRpe, fitSteps7dAvg, activeGoalCategory } = data;
+  const {
+    sessions, weekly, coachLevel, freezeActive, avgRpe, fitSteps7dAvg,
+    activeGoalCategory, activeGoalTargetValue, activeGoalTargetUnit,
+    bodyMetricHistory, liftHistory,
+  } = data;
 
   // Stat tile calculations
   const currentWeekKm = weekly[weekly.length - 1]?.km ?? 0;
@@ -156,14 +141,24 @@ export default async function AnalyticsPage() {
 
       {activeGoalCategory === "weight_loss" && (
         <>
-          <GoalPlaceholderCard
-            icon={<Scale className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
-            title="Weight Progress"
-            description="Log your weight weekly in Settings → Goal to track your progress here. Chart coming soon."
-          />
-          {/* Still show weekly sessions volume */}
           <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-1 text-sm font-semibold">Weekly Workout Volume</p>
+            <div className="flex items-center gap-2 mb-3">
+              <Scale className="h-4 w-4 text-indigo-500" />
+              <p className="text-sm font-semibold">Weight Trend</p>
+            </div>
+            {bodyMetricHistory.filter((d) => d.weightKg != null).length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                No weight entries yet. Log your weight in Settings → Goal to start tracking.
+              </p>
+            ) : (
+              <WeightTrendChart
+                data={bodyMetricHistory}
+                targetWeightKg={activeGoalTargetUnit === "kg" ? activeGoalTargetValue : null}
+              />
+            )}
+          </div>
+          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <p className="mb-1 text-sm font-semibold">Weekly Cardio Sessions</p>
             {sessions.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
             ) : (
@@ -175,13 +170,21 @@ export default async function AnalyticsPage() {
 
       {activeGoalCategory === "body_shape" && (
         <>
-          <GoalPlaceholderCard
-            icon={<Activity className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
-            title="Body Composition Tracking"
-            description="Body fat % and training mix charts are coming soon. Keep logging your workouts to build your trend."
-          />
           <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-1 text-sm font-semibold">Weekly Workout Volume</p>
+            <div className="flex items-center gap-2 mb-3">
+              <Activity className="h-4 w-4 text-indigo-500" />
+              <p className="text-sm font-semibold">Body Composition</p>
+            </div>
+            {bodyMetricHistory.filter((d) => d.bodyFatPct != null || d.weightKg != null).length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                No body metrics yet. Log weight & body fat in Settings → Goal to track progress.
+              </p>
+            ) : (
+              <WeightTrendChart data={bodyMetricHistory} targetWeightKg={null} />
+            )}
+          </div>
+          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <p className="mb-1 text-sm font-semibold">Weekly Training Volume</p>
             {sessions.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
             ) : (
@@ -193,13 +196,21 @@ export default async function AnalyticsPage() {
 
       {activeGoalCategory === "strength" && (
         <>
-          <GoalPlaceholderCard
-            icon={<Dumbbell className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />}
-            title="Strength Progress"
-            description="Lift PR tracking (bench, squat, deadlift) is coming soon. Log your sessions to build history."
-          />
           <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-1 text-sm font-semibold">Weekly Workout Volume</p>
+            <div className="flex items-center gap-2 mb-3">
+              <Dumbbell className="h-4 w-4 text-indigo-500" />
+              <p className="text-sm font-semibold">Lift Progression (kg)</p>
+            </div>
+            {liftHistory.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                No strength sessions logged yet. Log a strength workout to start tracking your lifts.
+              </p>
+            ) : (
+              <LiftProgressChart data={liftHistory} />
+            )}
+          </div>
+          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+            <p className="mb-1 text-sm font-semibold">Weekly Session Volume</p>
             {sessions.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
             ) : (

@@ -1,12 +1,12 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users, feedbackSentiment, trainingRoadmap, coachChatMessages } from "@/lib/db/schema";
+import { workoutLogs, userLevelState, users, feedbackSentiment, trainingRoadmap, coachChatMessages, goals } from "@/lib/db/schema";
 import { eq, desc, gte, and, inArray, count } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
+import type { GoalCategory, SessionPlan } from "@/lib/coach";
 import HomeClient from "@/components/home/HomeClient";
 import { getPendingColdStart } from "./coldStartActions";
-import type { SessionPlan } from "@/lib/coach";
 
 export default async function HomePage() {
   const session = await auth();
@@ -45,12 +45,13 @@ export default async function HomePage() {
     aiSummary = sent?.aiSummaryEn ?? null;
   }
 
-  // Coach state + recent logs for plan
-  const [stateRow, recentRaw] = await Promise.all([
+  // Coach state + recent logs + active goal for plan
+  const [stateRow, recentRaw, activeGoal] = await Promise.all([
     db.query.userLevelState.findFirst({ where: eq(userLevelState.userId, user.id) }),
     db.select().from(workoutLogs).where(
       and(eq(workoutLogs.userId, user.id), gte(workoutLogs.performedAt, (() => { const d = new Date(); d.setDate(d.getDate() - 14); return d; })()))
     ).orderBy(desc(workoutLogs.performedAt)).limit(20),
+    db.query.goals.findFirst({ where: and(eq(goals.userId, user.id), eq(goals.status, "active")) }),
   ]);
 
   const sentiments =
@@ -60,10 +61,12 @@ export default async function HomePage() {
   const sentMap = new Map(sentiments.map((s) => [s.workoutLogId, s]));
   const logsWithSentiment = recentRaw.map((l) => ({ ...l, sentiment: sentMap.get(l.id) ?? null }));
 
+  const goalCategory: GoalCategory = (activeGoal?.category ?? "running") as GoalCategory;
   const coachResult = evaluateCoach({
     recentLogs: logsWithSentiment,
     state: stateRow ?? { currentLevel: 1, greenSessionCount: 0, freezeActive: false, freezeReason: null, manualOverride: false, manualOverrideUntil: null },
     today: new Date(),
+    goalCategory,
   });
 
   // Next pending roadmap session (Bug #4: shown when already logged today)

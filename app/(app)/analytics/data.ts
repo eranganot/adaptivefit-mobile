@@ -7,7 +7,7 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users, fitDailyMetrics, goals } from "@/lib/db/schema";
+import { workoutLogs, userLevelState, users, fitDailyMetrics, goals, bodyMetrics, strengthLogs } from "@/lib/db/schema";
 import { eq, sql, and, gte, asc } from "drizzle-orm";
 
 export type WeeklyBucket = {
@@ -28,6 +28,20 @@ export type SessionPoint = {
 
 export type GoalCategory = "running" | "body_shape" | "weight_loss" | "strength";
 
+export type BodyMetricPoint = {
+  date: string;       // "DD Mon"
+  weightKg: number | null;
+  bodyFatPct: number | null;
+};
+
+export type LiftPoint = {
+  exercise: string;   // "Bench Press", "Squat", "Deadlift"
+  weightKg: number;
+  reps: number;
+  sets: number;
+  date: string;       // "DD Mon"
+};
+
 export type AnalyticsData = {
   weekly: WeeklyBucket[];
   sessions: SessionPoint[];
@@ -37,12 +51,15 @@ export type AnalyticsData = {
   totalSessions: number;
   avgRpe: number;
   peakWeekKm: number;
-  fitSteps7dAvg: number | null; // null = Fit not connected
+  fitSteps7dAvg: number | null;
   activeGoalCategory: GoalCategory;
   activeGoalTargetValue: number | null;
   activeGoalTargetUnit: string | null;
   activeGoalTargetDate: string | null;
   activeGoalCurrentValue: number | null;
+  // Phase 3 — per-category data
+  bodyMetricHistory: BodyMetricPoint[];   // weight_loss + body_shape
+  liftHistory: LiftPoint[];               // strength
 };
 
 function fmtWeekLabel(d: Date): string {
@@ -65,7 +82,7 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const sevenDaysAgoDate = sevenDaysAgo.toISOString().slice(0, 10);
 
-  const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics, activeGoal] = await Promise.all([
+  const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics, activeGoal, bodyMetricRows, liftRows] = await Promise.all([
     // ── 12-week weekly volume buckets (typed Drizzle select) ───────────────
     db
       .select({
@@ -119,6 +136,29 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       where: and(eq(goals.userId, user.id), eq(goals.status, "active")),
       orderBy: (g, { desc }) => [desc(g.createdAt)],
     }),
+
+    // ── Body metrics — last 12 weeks (weight_loss + body_shape) ──────────
+    db
+      .select()
+      .from(bodyMetrics)
+      .where(and(eq(bodyMetrics.userId, user.id), gte(bodyMetrics.date, twelveWeeksAgo.toISOString().slice(0, 10))))
+      .orderBy(asc(bodyMetrics.date))
+      .limit(100),
+
+    // ── Strength logs — last 12 weeks, one entry per exercise per workout ─
+    db
+      .select({
+        exercise: strengthLogs.exercise,
+        weightKg: strengthLogs.weightKg,
+        reps: strengthLogs.reps,
+        sets: strengthLogs.sets,
+        performedAt: workoutLogs.performedAt,
+      })
+      .from(strengthLogs)
+      .innerJoin(workoutLogs, eq(strengthLogs.workoutLogId, workoutLogs.id))
+      .where(and(eq(strengthLogs.userId, user.id), gte(workoutLogs.performedAt, twelveWeeksAgo)))
+      .orderBy(asc(workoutLogs.performedAt))
+      .limit(200),
   ]);
 
   // Shape weekly buckets — fill missing weeks with 0
@@ -183,6 +223,31 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     }
   }
 
+  // Shape body metrics
+  const bodyMetricHistory: BodyMetricPoint[] = bodyMetricRows.map((r) => ({
+    date: new Date(r.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+    weightKg: r.weightKg ? parseFloat(r.weightKg) : null,
+    bodyFatPct: r.bodyFatPct ? parseFloat(r.bodyFatPct) : null,
+  }));
+
+  // Shape strength logs — keep only the heaviest set per exercise per session date
+  const liftMap = new Map<string, LiftPoint>();
+  for (const r of liftRows) {
+    const key = `${r.exercise}::${new Date(r.performedAt).toISOString().slice(0, 10)}`;
+    const existing = liftMap.get(key);
+    const w = parseFloat(r.weightKg);
+    if (!existing || w > existing.weightKg) {
+      liftMap.set(key, {
+        exercise: r.exercise,
+        weightKg: w,
+        reps: r.reps,
+        sets: r.sets,
+        date: new Date(r.performedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+      });
+    }
+  }
+  const liftHistory: LiftPoint[] = Array.from(liftMap.values());
+
   return {
     weekly,
     sessions,
@@ -198,5 +263,7 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     activeGoalTargetUnit: activeGoal?.targetUnit ?? null,
     activeGoalTargetDate: activeGoal?.targetDate ?? null,
     activeGoalCurrentValue: activeGoal?.currentValue ? parseFloat(activeGoal.currentValue) : null,
+    bodyMetricHistory,
+    liftHistory,
   };
 }

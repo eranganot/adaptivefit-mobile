@@ -12,9 +12,11 @@ import {
   workoutLogs,
   feedbackSentiment,
   userLevelState,
+  goals,
 } from "@/lib/db/schema";
 import { eq, desc, gte, and, inArray } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
+import type { GoalCategory } from "@/lib/coach";
 import { regenerateRoadmapForUser } from "@/lib/roadmap/regenerate";
 
 export async function recomputeAfterChange(userId: string): Promise<void> {
@@ -22,7 +24,7 @@ export async function recomputeAfterChange(userId: string): Promise<void> {
     const fourteenDaysAgo = new Date();
     fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
 
-    const [stateRow, recentRaw] = await Promise.all([
+    const [stateRow, recentRaw, activeGoal] = await Promise.all([
       db.query.userLevelState.findFirst({ where: eq(userLevelState.userId, userId) }),
       db
         .select()
@@ -30,7 +32,12 @@ export async function recomputeAfterChange(userId: string): Promise<void> {
         .where(and(eq(workoutLogs.userId, userId), gte(workoutLogs.performedAt, fourteenDaysAgo)))
         .orderBy(desc(workoutLogs.performedAt))
         .limit(20),
+      db.query.goals.findFirst({
+        where: and(eq(goals.userId, userId), eq(goals.status, "active")),
+      }),
     ]);
+
+    const goalCategory: GoalCategory = (activeGoal?.category ?? "running") as GoalCategory;
 
     const sentiments =
       recentRaw.length > 0
@@ -57,6 +64,7 @@ export async function recomputeAfterChange(userId: string): Promise<void> {
         manualOverrideUntil: null,
       },
       today: new Date(),
+      goalCategory,
     });
 
     const { currentLevel, greenSessionCount, freezeActive, freezeReason } = coachResult.newState;

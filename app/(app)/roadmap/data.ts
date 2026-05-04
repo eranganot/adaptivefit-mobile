@@ -143,6 +143,8 @@ function formatBlockLabel(block: SessionBlock): string {
       return "Run Intervals";
     case "warmup":
       return "Warm-up";
+    case "strength_block":
+      return "Strength Work";
     case "mobility":
       return "Mobility";
     case "rest":
@@ -156,13 +158,13 @@ function formatBlockDetail(block: SessionBlock): string {
   switch (block.kind) {
     case "run_block": {
       const pace = formatPace(block.paceSecPerKm);
-      if (block.reps === 1) {
-        return `${block.distanceKm}km @ ${pace} /km`;
-      }
+      if (block.reps === 1) return `${block.distanceKm}km @ ${pace} /km`;
       return `${block.reps}× ${block.distanceKm}km @ ${pace} /km`;
     }
     case "warmup":
       return `${block.durationMin} min`;
+    case "strength_block":
+      return block.exercises.map((ex) => `${ex.name} ${ex.sets}×${ex.reps}`).join(" · ");
     case "mobility":
       return block.exercises.join(", ");
     case "rest":

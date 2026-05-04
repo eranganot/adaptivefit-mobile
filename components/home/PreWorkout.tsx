@@ -102,6 +102,11 @@ export default function PreWorkout({
             } else if (block.kind === "run_block") {
               title = "Run Block";
               description = `${block.reps} × ${block.distanceKm}km @ ${formatRunBlockPace(block.paceSecPerKm)}`;
+            } else if (block.kind === "strength_block") {
+              title = "Strength Work";
+              description = block.exercises
+                .map((ex) => `${ex.name} ${ex.sets}×${ex.reps} (RPE ${ex.rpeTarget})`)
+                .join(" · ");
             } else if (block.kind === "mobility") {
               title = t("home.mobility");
               description = block.exercises.join(" · ");

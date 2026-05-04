@@ -10,8 +10,10 @@ import {
   users,
   userLevelState,
   feedbackSentiment,
+  goals,
 } from "@/lib/db/schema";
 import { eq, desc, and, inArray, sql } from "drizzle-orm";
+import type { GoalCategory } from "@/lib/coach";
 import { extractFeedback } from "@/lib/gemini/extractFeedback";
 import { summarizePostWorkout } from "@/lib/gemini/summarizePostWorkout";
 import { evaluateCoach } from "@/lib/coach";
@@ -87,10 +89,11 @@ export async function logManualWorkout(input: {
       console.error("extractFeedback non-fatal:", e);
     }
 
-    // 4. Load coach state + recent logs for FSM
-    const [stateRow, recentRaw] = await Promise.all([
+    // 4. Load coach state + recent logs + active goal for FSM
+    const [stateRow, recentRaw, activeGoal] = await Promise.all([
       db.query.userLevelState.findFirst({ where: eq(userLevelState.userId, user.id) }),
       db.select().from(workoutLogs).where(eq(workoutLogs.userId, user.id)).orderBy(desc(workoutLogs.performedAt)).limit(14),
+      db.query.goals.findFirst({ where: and(eq(goals.userId, user.id), eq(goals.status, "active")) }),
     ]);
 
     const sentiments =
@@ -100,10 +103,12 @@ export async function logManualWorkout(input: {
     const sentMap = new Map(sentiments.map((s) => [s.workoutLogId, s]));
     const logsWithSentiment = recentRaw.map((l) => ({ ...l, sentiment: sentMap.get(l.id) ?? null }));
 
+    const goalCategory: GoalCategory = (activeGoal?.category ?? "running") as GoalCategory;
     const coachResult = evaluateCoach({
       recentLogs: logsWithSentiment,
       state: stateRow ?? { currentLevel: 1, greenSessionCount: 0, freezeActive: false, freezeReason: null, manualOverride: false, manualOverrideUntil: null },
       today: new Date(),
+      goalCategory,
     });
 
     const { currentLevel, greenSessionCount, freezeActive, freezeReason } = coachResult.newState;
