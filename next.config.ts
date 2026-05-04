@@ -9,8 +9,9 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "2mb",
     },
   },
-  // PWA manifest is served from /public; service worker registered on the client
-  // (see app/layout.tsx). Avoiding next-pwa for now to keep config simple.
+  // PWA: manifest served from /public/manifest.json; service worker at /public/sw.js.
+  // sw.js uses a two-cache strategy: CacheFirst for immutable _next/static assets,
+  // NetworkFirst with fallback for navigation. Cache names include -v2 for this deploy.
   poweredByHeader: false,
   reactStrictMode: true,
 };

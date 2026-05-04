@@ -2,7 +2,7 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, oauthTokens } from "@/lib/db/schema";
+import { users, oauthTokens, userLevelState } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
@@ -78,6 +78,83 @@ export async function disconnectGoogleFit(): Promise<{ success: boolean; error?:
   } catch (e) {
     console.error("disconnectGoogleFit error:", e);
     return { success: false, error: "Failed to disconnect" };
+  }
+}
+
+/**
+ * Bug #9 — Manual level override.
+ * Sets the user's training level directly, bypassing the FSM for up to 7 days.
+ */
+export async function setManualLevelOverride(
+  level: number,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) return { success: false, error: "Not authenticated" };
+
+    const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
+    if (!user) return { success: false, error: "User not found" };
+
+    const clampedLevel = Math.min(10, Math.max(1, Math.round(level)));
+    const overrideUntil = new Date();
+    overrideUntil.setDate(overrideUntil.getDate() + 7);
+
+    const existing = await db.query.userLevelState.findFirst({
+      where: eq(userLevelState.userId, user.id),
+    });
+
+    if (existing) {
+      await db
+        .update(userLevelState)
+        .set({
+          currentLevel: clampedLevel,
+          manualOverride: true,
+          manualOverrideUntil: overrideUntil,
+          lastEvaluatedAt: new Date(),
+        })
+        .where(eq(userLevelState.userId, user.id));
+    } else {
+      await db.insert(userLevelState).values({
+        userId: user.id,
+        currentLevel: clampedLevel,
+        greenSessionCount: 0,
+        freezeActive: false,
+        manualOverride: true,
+        manualOverrideUntil: overrideUntil,
+        lastEvaluatedAt: new Date(),
+      });
+    }
+
+    revalidatePath("/settings");
+    revalidatePath("/home");
+    revalidatePath("/roadmap");
+    return { success: true };
+  } catch (e) {
+    console.error("setManualLevelOverride error:", e);
+    return { success: false, error: "Failed to update level" };
+  }
+}
+
+/** Clear a manual level override — coach FSM resumes normally. */
+export async function clearManualLevelOverride(): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) return { success: false, error: "Not authenticated" };
+
+    const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
+    if (!user) return { success: false, error: "User not found" };
+
+    await db
+      .update(userLevelState)
+      .set({ manualOverride: false, manualOverrideUntil: null })
+      .where(eq(userLevelState.userId, user.id));
+
+    revalidatePath("/settings");
+    revalidatePath("/home");
+    return { success: true };
+  } catch (e) {
+    console.error("clearManualLevelOverride error:", e);
+    return { success: false, error: "Failed to clear override" };
   }
 }
 

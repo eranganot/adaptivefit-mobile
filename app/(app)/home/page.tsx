@@ -6,7 +6,7 @@ import { eq, desc, gte, and, inArray, count } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
 import type { GoalCategory, SessionPlan } from "@/lib/coach";
 import HomeClient from "@/components/home/HomeClient";
-import { getPendingColdStart } from "./coldStartActions";
+import { getPendingColdStart, ensureColdStartExists } from "./coldStartActions";
 
 export default async function HomePage() {
   const session = await auth();
@@ -128,6 +128,10 @@ export default async function HomePage() {
   }
 
   // Cold-start pending recommendation (Bug #8)
+  // Ensure first-time users (no level state + no pending cold-start) get the onboarding modal
+  if (!stateRow) {
+    await ensureColdStartExists(user.id).catch(() => null);
+  }
   const pendingColdStart = await getPendingColdStart().catch(() => null);
 
   // Yesterday's Fit stats (shown only if Google Fit connected)

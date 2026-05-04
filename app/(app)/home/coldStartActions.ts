@@ -7,6 +7,42 @@ import { eq, and, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { regenerateRoadmapForUser } from "@/lib/roadmap/regenerate";
 
+/**
+ * Called on every Home page render for users with no userLevelState.
+ * If neither a level-state row nor a pending cold-start exists yet,
+ * inserts a default cold-start so the level-picker modal shows on first visit.
+ */
+export async function ensureColdStartExists(userId: string): Promise<void> {
+  const [existingState, existingColdStart] = await Promise.all([
+    db.query.userLevelState.findFirst({
+      where: eq(userLevelState.userId, userId),
+    }),
+    db.query.coldStartAnalysis.findFirst({
+      where: and(
+        eq(coldStartAnalysis.userId, userId),
+        eq(coldStartAnalysis.status, "pending"),
+      ),
+    }),
+  ]);
+
+  if (!existingState && !existingColdStart) {
+    await db
+      .insert(coldStartAnalysis)
+      .values({
+        userId,
+        source: "manual_history",
+        rawInput: "New user onboarding — no activity data yet.",
+        extracted: {
+          rationale:
+            "Welcome! Pick your starting level so the coach can build the right plan for you. You can change this any time in Settings.",
+        },
+        recommendedLevel: 1,
+        status: "pending",
+      })
+      .onConflictDoNothing();
+  }
+}
+
 /** Returns the pending cold-start row for the current user, if any. */
 export async function getPendingColdStart(): Promise<{
   id: string;

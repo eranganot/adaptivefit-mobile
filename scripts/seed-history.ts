@@ -16,6 +16,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "../lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import type { SessionPlan } from "../lib/coach";
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 const pool = new Pool({ connectionString: process.env.DATABASE_URL! });
@@ -299,6 +300,74 @@ const HISTORY: Array<{
         "יצאת למרות המתח — ניצחון. חימום 10 דק' + 3 × 1.5 ק\"מ בקצב 6:36 / 6:52 / 6:52 עם 3 דק' הליכה. קצב יציב. שמרת על גב זקוף. כאב קל בסוף. בסיס אירובי חזק.",
     },
   },
+
+  // ── Session 12 — 30/04/2026: 5 × 600m intervals ──────────────────────────
+  // From Gemini chat: "אימון-ריצה-עם-מתח" — intervals felt easy, no pain
+  {
+    performedAt: abs("2026-04-30", 7),
+    type: "run",
+    distanceKm: 4.9,
+    durationMin: 40,
+    rpe: 6,
+    footPain: 0,
+    notesRaw:
+      "5 אינטרוולים של 600 מטר עם 90 שניות הליכה בין כל סט. חימום 10 דק'. האימון הרגיש יחסית קל לאורך כל הריצה — הרגשתי שאני יכול לרוץ מהר יותר. ללא כאבים ברגליים.",
+    notesLocale: "he",
+    sentiment: {
+      overallSentiment: "positive",
+      symptoms: [],
+      severity: 0,
+      aiSummaryEn:
+        "5 × 600m intervals with 90s walk recovery. Felt easy throughout — aerobic capacity clearly improving. No foot pain, no form breakdown. Could have pushed harder. Ready for increased intensity.",
+      aiSummaryHe:
+        "5 × 600 מטר עם 90 שניות הליכה. האימון הרגיש קל — הכושר האירובי משתפר. ללא כאבים, ללא בעיות טכניקה. מוכן לאינטנסיביות גבוהה יותר.",
+    },
+  },
+
+  // ── Session 13 — 03/05/2026: 32-min continuous run ───────────────────────
+  // From Gemini chat: "ניתוח-אימון-ריצה" — good pace, foot + thigh pain at end
+  {
+    performedAt: abs("2026-05-03", 7),
+    type: "run",
+    distanceKm: 4.54,
+    durationMin: 32,
+    rpe: 7,
+    footPain: 4,
+    notesRaw:
+      "חימום הליכה 7 דק'. ריצה רציפה 32 דק'. קצב: 6:34 (ק\"מ 1), 7:03-7:09 (ק\"מ 2-4), פיניש חזק ב-500 מטר האחרונים (6:05). כאבים בכפות הרגליים ובשרירי הירכיים בסוף. נשימה מאתגרת אך לא מוגזמת. יכולת התאוששות מהירה.",
+    notesLocale: "he",
+    sentiment: {
+      overallSentiment: "concern",
+      symptoms: ["foot_pain", "muscle_fatigue"],
+      severity: 4,
+      aiSummaryEn:
+        "32min continuous run. Km 1: 6:34 (strong start), km 2-4: 7:03-7:09 (stable), final 500m: 6:05 (big finish). Total 4.54km. Foot pain and thigh soreness at end — sign of late-run fatigue. Breathing was challenging but manageable. Fast recovery — a good aerobic sign.",
+      aiSummaryHe:
+        "32 דק' ריצה רציפה. ק\"מ 1: 6:34, ק\"מ 2-4: 7:03-7:09 (יציב), 500 מטר אחרונים: 6:05 (פיניש חזק). סה\"כ 4.54 ק\"מ. כאבים בכפות ובירכיים — עייפות סוף ריצה. נשימה מאתגרת אך נשלטת. התאוששות מהירה — סימן אירובי טוב.",
+    },
+  },
+
+  // ── Session 14 — 03/05/2026 (evening): Strength — upper body + core ───────
+  // From same Gemini chat — done at home after the run
+  {
+    performedAt: abs("2026-05-03", 20),
+    type: "strength",
+    durationMin: 20,
+    rpe: 6,
+    footPain: 0,
+    notesRaw:
+      "אימון כוח אחרי הריצה — 3 סטים: 12 שכיבות סמיכה, 15 כפיפות בטן רגילות, 15 כפיפות בטן תחתונה. התמקדות בפלג גוף עליון וליבה בלבד, ללא עומס על הרגליים.",
+    notesLocale: "he",
+    sentiment: {
+      overallSentiment: "positive",
+      symptoms: [],
+      severity: 0,
+      aiSummaryEn:
+        "Evening strength after morning run. 3 sets: 12 push-ups, 15 regular crunches, 15 lower crunches. Upper body + core only — smart choice to keep leg load zero on a run day.",
+      aiSummaryHe:
+        "אימון כוח בערב אחרי ריצת הבוקר. 3 סטים: 12 שכיבות סמיכה, 15 כפיפות בטן, 15 כפיפות בטן תחתונה. עמוד עליון וליבה בלבד — בחירה נכונה.",
+    },
+  },
 ];
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -377,6 +446,56 @@ async function main() {
   }
 
   console.log(`\n✅ Done — inserted ${inserted}, skipped ${skipped} (already existed)`);
+
+  // ── Wednesday May 6 roadmap entry ────────────────────────────────────────
+  // Combined: 5×600m intervals + upper body strength, 18:30 (75 min)
+  // From Gemini chat: "אימון-ריצה-עם-מתח" future Wednesday plan
+  // weekIndex=0 (current week Mon 4-May), dayIndex=2 (Wednesday)
+  const wedPlan: SessionPlan = {
+    title: "אינטרוולים 5×600מ' + כוח עליון",
+    rationale:
+      "שילוב אינטרוולים לשיפור מהירות עם אימון כוח פלג גוף עליון וליבה. קצב מטרה: 5:45-6:00/ק\"מ. 75 דקות כולל שחרור.",
+    blocks: [
+      { kind: "warmup", durationMin: 10 },
+      { kind: "run_block", distanceKm: 0.6, paceSecPerKm: 352, reps: 5, recoverySec: 120 },
+      {
+        kind: "strength_block",
+        exercises: [
+          { name: "שכיבות סמיכה", sets: 3, reps: 12, rpeTarget: 7 },
+          { name: "פלאנק 60 שניות", sets: 3, reps: 1, rpeTarget: 7 },
+          { name: "כפיפות בטן", sets: 3, reps: 20, rpeTarget: 6 },
+          { name: "כפיפות בטן תחתונה", sets: 3, reps: 20, rpeTarget: 6 },
+        ],
+      },
+      { kind: "mobility", exercises: ["הליכת שחרור 5 דקות"] },
+    ],
+  };
+
+  // Check if entry already exists (idempotent)
+  const existingWed = await db.query.trainingRoadmap.findFirst({
+    where: and(
+      eq(schema.trainingRoadmap.userId, user.id),
+      eq(schema.trainingRoadmap.weekIndex, 0),
+      eq(schema.trainingRoadmap.dayIndex, 2),
+    ),
+  });
+
+  if (existingWed) {
+    console.log("  ↩ Skip roadmap Wed entry (exists)");
+  } else {
+    await db.insert(schema.trainingRoadmap).values({
+      userId: user.id,
+      goalId: null,
+      weekIndex: 0,
+      dayIndex: 2,
+      sessionPlan: wedPlan as unknown as Record<string, unknown>,
+      status: "pending",
+      createdAt: new Date(),
+    });
+    console.log("  ✓ Roadmap: Wed 6 May — אינטרוולים 5×600מ' + כוח עליון");
+  }
+
+  console.log("\n✅ Roadmap entry done.");
   await pool.end();
 }
 

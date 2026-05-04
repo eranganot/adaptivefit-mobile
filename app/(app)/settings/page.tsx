@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, goals, oauthTokens } from "@/lib/db/schema";
+import { users, goals, oauthTokens, userLevelState } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { SettingsClient } from "./SettingsClient";
@@ -65,5 +65,22 @@ export default async function SettingsPage() {
     console.error("Error fetching Fit token:", e);
   }
 
-  return <SettingsClient locale={locale} activeGoal={activeGoal} fitToken={fitToken} />;
+  // Get coach level state (Bug #9)
+  let levelState: { currentLevel: number; manualOverride: boolean; manualOverrideUntil: Date | null } | null = null;
+  try {
+    const stateRow = await db.query.userLevelState.findFirst({
+      where: eq(userLevelState.userId, user.id),
+    });
+    if (stateRow) {
+      levelState = {
+        currentLevel: stateRow.currentLevel,
+        manualOverride: stateRow.manualOverride ?? false,
+        manualOverrideUntil: stateRow.manualOverrideUntil ?? null,
+      };
+    }
+  } catch (e) {
+    console.error("Error fetching level state:", e);
+  }
+
+  return <SettingsClient locale={locale} activeGoal={activeGoal} fitToken={fitToken} levelState={levelState} />;
 }
