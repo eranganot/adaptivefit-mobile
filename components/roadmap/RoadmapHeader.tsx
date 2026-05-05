@@ -46,7 +46,7 @@ export function RoadmapHeader({
           <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white">
+          <span className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white">
             {weekBadge}
           </span>
           <button

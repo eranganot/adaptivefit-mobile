@@ -1,13 +1,19 @@
-// AdaptiveFit service worker — v2
+// AdaptiveFit service worker — v3
 // Strategy:
 //   - _next/static/** (immutable hashed bundles) → CacheFirst, long-lived cache
-//   - manifest.json, icons          → CacheFirst, shell cache
+//   - manifest.json only             → CacheFirst shell precache (auth routes removed)
 //   - API + auth routes             → NetworkOnly (skip SW)
 //   - Everything else               → NetworkFirst with cache fallback
+//
+// v3 change: auth-protected pages (/home, /roadmap, /analytics, /settings) removed
+// from SHELL_PRECACHE. They were being cached at install time (unauthenticated,
+// pre-theme-script) and falling back to that stale shell on hard refresh, causing
+// the whole app to render in light mode. They will be cached on first online visit
+// via the existing NetworkFirst path instead.
 
-const SHELL_CACHE = "af-shell-v2";
+const SHELL_CACHE = "af-shell-v3";
 const STATIC_CACHE = "af-static-v2";
-const SHELL_PRECACHE = ["/", "/home", "/roadmap", "/analytics", "/settings", "/manifest.json"];
+const SHELL_PRECACHE = ["/manifest.json"];
 
 // ── Install ──────────────────────────────────────────────────────────────────
 self.addEventListener("install", (event) => {

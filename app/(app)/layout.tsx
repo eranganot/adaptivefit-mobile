@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { BottomNav } from "@/components/custom/BottomNav";
+import { ThemeGuard } from "@/components/custom/ThemeGuard";
 import { Settings } from "lucide-react";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -48,6 +49,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <main className="flex-1 px-4 pb-28 pt-5">{children}</main>
 
       <BottomNav />
+      <ThemeGuard />
     </div>
   );
 }

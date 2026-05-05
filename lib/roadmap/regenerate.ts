@@ -3,6 +3,7 @@ import { trainingRoadmap, workoutLogs, userLevelState, goals } from "@/lib/db/sc
 import { eq, and, gte, desc } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
 import type { CoachInputs, GoalCategory } from "@/lib/coach";
+import { periodize } from "@/lib/coach/periodize";
 
 /**
  * Core regeneration logic — shared between the roadmap server action and
@@ -24,16 +25,16 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
       ),
     );
 
-  const last14Days = new Date();
-  last14Days.setDate(last14Days.getDate() - 14);
+  const last8Weeks = new Date();
+  last8Weeks.setDate(last8Weeks.getDate() - 56);
 
   const [recentLogs, stateRow, activeGoal] = await Promise.all([
     db
       .select()
       .from(workoutLogs)
-      .where(and(eq(workoutLogs.userId, userId), gte(workoutLogs.performedAt, last14Days)))
+      .where(and(eq(workoutLogs.userId, userId), gte(workoutLogs.performedAt, last8Weeks)))
       .orderBy(desc(workoutLogs.performedAt))
-      .limit(20),
+      .limit(64),
 
     db.query.userLevelState.findFirst({
       where: eq(userLevelState.userId, userId),
@@ -45,6 +46,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
   ]);
 
   const goalCategory: GoalCategory = (activeGoal?.category ?? "running") as GoalCategory;
+  const targetDate: Date | null = activeGoal?.targetDate ? new Date(activeGoal.targetDate) : null;
 
   let simulatedState: CoachInputs["state"] = stateRow
     ? {
@@ -67,6 +69,8 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
   const sessionsToCreate = [];
 
   for (let weekIdx = 0; weekIdx < 2; weekIdx++) {
+    const pd = periodize({ weekIndex: weekIdx, targetDate });
+
     // Session 1 (Tue) — quality / push day
     const tueResult = evaluateCoach({
       recentLogs,
@@ -74,6 +78,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
       today: new Date(),
       sessionKind: "quality",
       goalCategory,
+      periodize: { volumeMultiplier: pd.volumeMultiplier, levelOffset: pd.levelOffset },
     });
     sessionsToCreate.push({
       userId,
@@ -93,6 +98,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
       today: new Date(),
       sessionKind: "endurance",
       goalCategory,
+      periodize: { volumeMultiplier: pd.volumeMultiplier, levelOffset: pd.levelOffset },
     });
     sessionsToCreate.push({
       userId,

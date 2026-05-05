@@ -14,7 +14,7 @@ import type { WorkoutLog, FeedbackSentiment, UserLevelState } from "@/lib/db/sch
 export type GoalCategory = "running" | "body_shape" | "weight_loss" | "strength";
 
 export type CoachInputs = {
-  /** Last 14 days of workout logs, newest-first */
+  /** Last 8 weeks of workout logs, newest-first (pain rules still use a 14-day sub-window) */
   recentLogs: Array<WorkoutLog & { sentiment?: FeedbackSentiment | null }>;
   /** Current FSM state for the user */
   state: Pick<
@@ -32,6 +32,14 @@ export type CoachInputs = {
   sessionKind?: "quality" | "endurance";
   /** Active goal category — drives session plan type. Default: "running" */
   goalCategory?: GoalCategory;
+  /**
+   * Periodization context from lib/coach/periodize.ts.
+   * Adjusts volume and level tier for the planned session.
+   */
+  periodize?: {
+    volumeMultiplier: number;
+    levelOffset: number;
+  };
 };
 
 export type SessionBlock =
@@ -107,9 +115,11 @@ export function evaluateCoach(inputs: CoachInputs): CoachResult {
 // Running coach (also used for weight_loss and body_shape)
 // ─────────────────────────────────────────────────────────────────────────────
 function evaluateRunningCoach(inputs: CoachInputs, rulesApplied: string[]): CoachResult {
-  const { recentLogs, state, today, sessionKind = "quality", goalCategory = "running" } = inputs;
+  const { recentLogs, state, today, sessionKind = "quality", goalCategory = "running", periodize: pd } = inputs;
+  const volMul = pd?.volumeMultiplier ?? 1.0;
+  const levelOffset = pd?.levelOffset ?? 0;
 
-  // Rule 1: hard freeze on foot pain >= 7 in last 7 days
+  // Rule 1: hard freeze on foot pain >= 7 in last 7 days (pain window stays at 14 days)
   const sevenDaysAgo = new Date(today);
   sevenDaysAgo.setDate(today.getDate() - 7);
   const hadHardPain = recentLogs.some(
@@ -189,7 +199,7 @@ function evaluateRunningCoach(inputs: CoachInputs, rulesApplied: string[]): Coac
     });
   }
 
-  // Rule 6: default — plan session at current level
+  // Rule 6: default — plan session at current level + periodize
   rulesApplied.push("default_repeat");
   const rationale =
     goalCategory === "weight_loss"
@@ -197,7 +207,8 @@ function evaluateRunningCoach(inputs: CoachInputs, rulesApplied: string[]): Coac
       : goalCategory === "body_shape"
         ? "Balanced session — mix of cardio and bodyweight work."
         : "Repeating last completed structure.";
-  return makeResult(state, buildSessionForLevel(level, sessionKind, rationale), rulesApplied, {
+  const effectiveLevel = Math.max(1, Math.min(10, level + levelOffset));
+  return makeResult(state, buildSessionForLevel(effectiveLevel, sessionKind, rationale, volMul), rulesApplied, {
     greenSessionCount: greens,
     freezeActive: false,
   });
@@ -364,39 +375,82 @@ function promotedSession(newLevel: number, rationale: string): SessionPlan {
 }
 
 /**
- * Build a running session plan for a given level and kind.
- * quality (Tue) = shorter intervals with recovery
- * endurance (Fri) = longer continuous run
+ * Build a running session plan for a given level, kind, and volume multiplier.
+ *
+ * quality (Tue) = short fast intervals (400m–1200m reps) + supplementary strength.
+ *   Level 1-2:  3 × 400 m @ ~7:00/km  (RPE 6-7)
+ *   Level 3-4:  5 × 600 m @ ~5:45/km  (RPE 7)
+ *   Level 5-6:  6 × 800 m @ ~5:30/km  (RPE 7-8)
+ *   Level 7-8:  5 × 1000 m @ ~5:15/km (RPE 8)
+ *   Level 9-10: 4 × 1200 m @ ~5:00/km (RPE 8-9)
+ *
+ * endurance (Fri) = continuous easy run, scaled by level.
+ *   Level 1-2: 2.5 km   Level 3-4: 4.0 km   Level 5-6: 5.5 km
+ *   Level 7-8: 7.0 km   Level 9-10: 9.0 km
  */
 export function buildSessionForLevel(
   level: number,
   kind: "quality" | "endurance",
   rationale: string,
+  volumeMultiplier = 1.0,
 ): SessionPlan {
-  const baseDistance = 1.5;
-  const distance = Math.round((baseDistance * (1 + 0.2 * (level - 1))) * 10) / 10;
-  const paceSecPerKm = Math.max(360, 450 - (level - 1) * 5);
-
   if (kind === "endurance") {
-    const enduranceDist = Math.round(distance * 1.5 * 10) / 10;
-    const endurancePace = paceSecPerKm + 15;
+    // Continuous easy run — distance scales with level
+    const baseDists = [2.5, 2.5, 4.0, 4.0, 5.5, 5.5, 7.0, 7.0, 9.0, 9.0];
+    const baseDist = baseDists[Math.min(level - 1, 9)];
+    const dist = Math.round(baseDist * volumeMultiplier * 10) / 10;
+    // Easy pace: 7:30 → 6:30 /km scaling with level
+    const easyPace = Math.max(390, 450 - (level - 1) * 6);
     return {
-      title: `${enduranceDist.toFixed(1)} km Easy Run`,
+      title: `${dist.toFixed(1)} km Easy Run`,
       blocks: [
         { kind: "warmup", durationMin: 5 },
-        { kind: "run_block", distanceKm: enduranceDist, paceSecPerKm: endurancePace, reps: 1, recoverySec: 0 },
+        { kind: "run_block", distanceKm: dist, paceSecPerKm: easyPace, reps: 1, recoverySec: 0 },
         { kind: "mobility", exercises: ["Bird-Dog", "Plank", "Plantar Massage (ice bottle)"] },
       ],
       rationale,
     };
   }
 
+  // Quality intervals — short, fast reps + supplementary strength
+  type IntervalSpec = { reps: number; distanceKm: number; paceSecPerKm: number; recoverySec: number };
+  const intervalTable: IntervalSpec[] = [
+    { reps: 3, distanceKm: 0.4, paceSecPerKm: 420, recoverySec: 90 },  // L1
+    { reps: 3, distanceKm: 0.4, paceSecPerKm: 405, recoverySec: 90 },  // L2
+    { reps: 5, distanceKm: 0.6, paceSecPerKm: 345, recoverySec: 90 },  // L3 ← 5×600m
+    { reps: 5, distanceKm: 0.6, paceSecPerKm: 330, recoverySec: 90 },  // L4 ← 5×600m faster
+    { reps: 6, distanceKm: 0.8, paceSecPerKm: 330, recoverySec: 120 }, // L5
+    { reps: 6, distanceKm: 0.8, paceSecPerKm: 315, recoverySec: 120 }, // L6
+    { reps: 5, distanceKm: 1.0, paceSecPerKm: 315, recoverySec: 120 }, // L7
+    { reps: 5, distanceKm: 1.0, paceSecPerKm: 300, recoverySec: 120 }, // L8
+    { reps: 4, distanceKm: 1.2, paceSecPerKm: 300, recoverySec: 150 }, // L9
+    { reps: 4, distanceKm: 1.2, paceSecPerKm: 285, recoverySec: 150 }, // L10
+  ];
+  const spec = intervalTable[Math.min(level - 1, 9)];
+  // Apply volume multiplier to rep count (min 2)
+  const reps = Math.max(2, Math.round(spec.reps * volumeMultiplier));
+
   return {
-    title: `Level ${level}: 3 × ${distance.toFixed(1)} km @ ${formatPace(paceSecPerKm)} /km`,
+    title: `${reps} × ${(spec.distanceKm * 1000).toFixed(0)} m @ ${formatPace(spec.paceSecPerKm)} /km`,
     blocks: [
-      { kind: "warmup", durationMin: 6 },
-      { kind: "run_block", distanceKm: distance, paceSecPerKm, reps: 3, recoverySec: 120 },
-      { kind: "mobility", exercises: ["Bird-Dog", "Plank", "Superman", "Push-ups"] },
+      { kind: "warmup", durationMin: 8 },
+      {
+        kind: "run_block",
+        distanceKm: spec.distanceKm,
+        paceSecPerKm: spec.paceSecPerKm,
+        reps,
+        recoverySec: spec.recoverySec,
+      },
+      // Supplementary strength for runners (plantar-fascia safe)
+      {
+        kind: "strength_block",
+        exercises: [
+          { name: "Push-ups", sets: 3, reps: 10, rpeTarget: 6 },
+          { name: "Bird-Dog", sets: 3, reps: 10, rpeTarget: 5 },
+          { name: "Single-leg Calf Raise", sets: 3, reps: 12, rpeTarget: 6 },
+        ],
+      },
+      { kind: "mobility", exercises: ["Plantar Massage (ice bottle)", "Hip Flexor Stretch", "Superman"] },
     ],
     rationale,
   };

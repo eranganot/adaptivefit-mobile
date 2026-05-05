@@ -71,7 +71,7 @@ export function ChatThread({ workoutLogId, initialMessages }: ChatThreadProps) {
         >
           <ArrowLeft className="h-4 w-4 text-gray-700 dark:text-gray-300" />
         </button>
-        <div className="h-9 w-9 rounded-full bg-blue-600 flex items-center justify-center">
+        <div className="h-9 w-9 rounded-full bg-indigo-600 flex items-center justify-center">
           <Brain className="h-5 w-5 text-white" />
         </div>
         <div>
