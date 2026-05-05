@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import "mapbox-gl/dist/mapbox-gl.css";
 import type { GpsRawPoint } from "@/lib/run/haversine";
 
 interface MapboxLiveMapProps {
@@ -21,9 +22,13 @@ export default function MapboxLiveMap({
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
-  const markerRef = useRef<HTMLDivElement | null>(null);
+  // Store the HTML element for pause/resume animation control
+  const dotElRef = useRef<HTMLDivElement | null>(null);
+  // Store the Mapbox Marker object so we can call setLngLat() on updates
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markerObjRef = useRef<any>(null);
 
-  // ── Init map ──────────────────────────────────────────────────
+  // ── Init map (runs once) ──────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     if (!TOKEN) return;
@@ -47,10 +52,14 @@ export default function MapboxLiveMap({
       mapRef.current = map;
 
       map.on("load", () => {
-        // Add route source + layer
+        // ── Route source + layer ─────────────────────────────────
         map.addSource("route", {
           type: "geojson",
-          data: { type: "Feature", geometry: { type: "LineString", coordinates: [] }, properties: {} },
+          data: {
+            type: "Feature",
+            geometry: { type: "LineString", coordinates: [] },
+            properties: {},
+          },
         });
         map.addLayer({
           id: "route-line",
@@ -63,35 +72,39 @@ export default function MapboxLiveMap({
           },
         });
 
-        // Pulsing dot marker
+        // ── Pulsing dot marker ───────────────────────────────────
         const el = document.createElement("div");
-        el.className = "run-dot";
         el.style.cssText = `
           width: 16px; height: 16px;
           border-radius: 50%;
           background: #2563eb;
           border: 3px solid white;
           box-shadow: 0 0 0 0 rgba(37,99,235,0.6);
-          animation: pulse 1.5s infinite;
+          animation: af-pulse 1.5s infinite;
         `;
-        markerRef.current = el;
+        dotElRef.current = el;
 
-        if (currentPosition) {
-          new mapboxgl.default.Marker({ element: el })
-            .setLngLat([currentPosition.lon, currentPosition.lat])
-            .addTo(map);
-        }
+        const startLng = currentPosition?.lon ?? 34.78;
+        const startLat = currentPosition?.lat ?? 32.07;
+
+        // Store the Marker object — we need it to update position later
+        const marker = new mapboxgl.default.Marker({ element: el })
+          .setLngLat([startLng, startLat])
+          .addTo(map);
+        markerObjRef.current = marker;
       });
     });
 
     return () => {
       map?.remove();
       mapRef.current = null;
+      markerObjRef.current = null;
+      dotElRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // init once
 
-  // ── Update route polyline ──────────────────────────────────────
+  // ── Update route polyline on each GPS tick ────────────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
@@ -107,24 +120,27 @@ export default function MapboxLiveMap({
     });
   }, [route]);
 
-  // ── Update marker position + pan ──────────────────────────────
+  // ── Update marker position + pan to follow runner ─────────────
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !currentPosition) return;
+
     const lngLat: [number, number] = [currentPosition.lon, currentPosition.lat];
+
+    // Pan map to follow
     map.easeTo({ center: lngLat, duration: 800 });
 
-    if (markerRef.current) {
-      // Update marker position via the marker object stored in a ref
-      // We stored the Marker in a different ref; simplest: re-create on update
+    // Update marker position — this was previously a no-op
+    if (markerObjRef.current) {
+      markerObjRef.current.setLngLat(lngLat);
     }
   }, [currentPosition]);
 
   // ── Pause: stop dot pulsing ───────────────────────────────────
   useEffect(() => {
-    const el = markerRef.current;
+    const el = dotElRef.current;
     if (!el) return;
-    el.style.animation = isRunning ? "pulse 1.5s infinite" : "none";
+    el.style.animation = isRunning ? "af-pulse 1.5s infinite" : "none";
     el.style.opacity = isRunning ? "1" : "0.6";
   }, [isRunning]);
 
@@ -141,7 +157,7 @@ export default function MapboxLiveMap({
   return (
     <>
       <style>{`
-        @keyframes pulse {
+        @keyframes af-pulse {
           0%   { box-shadow: 0 0 0 0 rgba(37,99,235,0.6); }
           70%  { box-shadow: 0 0 0 10px rgba(37,99,235,0); }
           100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); }
