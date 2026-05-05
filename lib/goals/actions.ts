@@ -42,12 +42,7 @@ export async function saveGoal(
     });
     if (!user) return { success: false, error: "User not found" };
 
-    // Archive any existing active goal
-    await db
-      .update(goals)
-      .set({ status: "archived" })
-      .where(and(eq(goals.userId, user.id), eq(goals.status, "active")));
-
+    // R3: Multiple active goals allowed — just insert without archiving existing ones
     // Insert new active goal
     await db.insert(goals).values({
       userId: user.id,
@@ -70,6 +65,33 @@ export async function saveGoal(
   } catch (e) {
     console.error("[saveGoal] error:", e);
     return { success: false, error: "Failed to save goal. Please try again." };
+  }
+}
+
+/** R3: Archive a specific goal by ID (used in multi-goal settings UI) */
+export async function archiveGoalById(
+  goalId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) return { success: false, error: "Not authenticated" };
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, session.user.email),
+    });
+    if (!user) return { success: false, error: "User not found" };
+
+    await db
+      .update(goals)
+      .set({ status: "archived" })
+      .where(and(eq(goals.id, goalId), eq(goals.userId, user.id)));
+
+    revalidatePath("/home");
+    revalidatePath("/settings");
+    return { success: true };
+  } catch (e) {
+    console.error("[archiveGoalById] error:", e);
+    return { success: false, error: "Failed to archive goal." };
   }
 }
 

@@ -28,7 +28,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
   const last8Weeks = new Date();
   last8Weeks.setDate(last8Weeks.getDate() - 56);
 
-  const [recentLogs, stateRow, activeGoal] = await Promise.all([
+  const [recentLogs, stateRow, allActiveGoals] = await Promise.all([
     db
       .select()
       .from(workoutLogs)
@@ -40,10 +40,16 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
       where: eq(userLevelState.userId, userId),
     }),
 
-    db.query.goals.findFirst({
-      where: and(eq(goals.userId, userId), eq(goals.status, "active")),
-    }),
+    db.select().from(goals)
+      .where(and(eq(goals.userId, userId), eq(goals.status, "active")))
+      .orderBy(desc(goals.createdAt)),
   ]);
+
+  // R3: Pick primary goal — running takes precedence (runner-first product), else most recent
+  const CATEGORY_PRIORITY: Record<string, number> = { running: 0, weight_loss: 1, body_shape: 2, strength: 3 };
+  const activeGoal = [...(allActiveGoals ?? [])].sort(
+    (a, b) => (CATEGORY_PRIORITY[a.category] ?? 9) - (CATEGORY_PRIORITY[b.category] ?? 9),
+  )[0] ?? null;
 
   const goalCategory: GoalCategory = (activeGoal?.category ?? "running") as GoalCategory;
   const targetDate: Date | null = activeGoal?.targetDate ? new Date(activeGoal.targetDate) : null;

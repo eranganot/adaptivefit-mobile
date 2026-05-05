@@ -21,29 +21,23 @@ import {
 } from "lucide-react";
 import { setLocale, disconnectGoogleFit, syncGoogleFit, setManualLevelOverride, clearManualLevelOverride } from "./actions";
 import { GoalForm } from "@/components/goals/GoalForm";
-
-type Goal = {
-  id: string;
-  type: string;
-  targetValue: string;
-  targetDate: string;
-  status: string;
-  note: string | null;
-};
+import { archiveGoalById } from "@/lib/goals/actions";
+import type { SettingsGoal } from "./page";
 
 interface SettingsClientProps {
   locale: "en" | "he";
-  activeGoal: Goal | null;
+  activeGoals: SettingsGoal[];
   fitToken: { status: string; lastSyncAt: Date | null } | null;
   levelState: { currentLevel: number; manualOverride: boolean; manualOverrideUntil: Date | null } | null;
 }
 
-export function SettingsClient({ locale, activeGoal, fitToken, levelState }: SettingsClientProps) {
+export function SettingsClient({ locale, activeGoals, fitToken, levelState }: SettingsClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isDark, setIsDark] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [showGoalForm, setShowGoalForm] = useState(!activeGoal);
+  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
   const [isSyncing, startSync] = useTransition();
   const [syncResult, setSyncResult] = useState<string | null>(null);
   // Bug #9 — manual level override
@@ -109,6 +103,14 @@ export function SettingsClient({ locale, activeGoal, fitToken, levelState }: Set
       setSyncResult(result.success ? `Synced — ${result.daysFetched} days updated` : `Error: ${result.error}`);
       router.refresh();
     });
+  };
+
+  const handleArchiveGoal = async (goalId: string) => {
+    if (!confirm("Archive this goal? It will no longer influence your roadmap.")) return;
+    setArchivingId(goalId);
+    const result = await archiveGoalById(goalId);
+    setArchivingId(null);
+    if (result.success) router.refresh();
   };
 
   const handleDisconnect = async () => {
@@ -235,56 +237,76 @@ export function SettingsClient({ locale, activeGoal, fitToken, levelState }: Set
           </div>
         </div>
 
-        {/* Section 3: Goal */}
-        <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm p-5 space-y-4">
-          <div className="flex items-center gap-3 mb-4">
-            <Target className="w-5 h-5 text-green-600" />
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Goal
-            </h2>
+        {/* Section 3: Goals (R3 — multi-goal) */}
+        <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm p-5 space-y-3">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-3">
+              <Target className="w-5 h-5 text-indigo-600" />
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Goals</h2>
+            </div>
+            <button
+              onClick={() => setShowGoalForm((v) => !v)}
+              className="rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
+            >
+              {showGoalForm ? "Cancel" : "+ Add Goal"}
+            </button>
           </div>
 
-          {activeGoal && !showGoalForm ? (
-            <div>
-              <div className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950 dark:to-emerald-950 rounded-2xl p-4 mb-4">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="font-semibold text-gray-900 dark:text-white capitalize">
-                      {activeGoal.type}
-                    </h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                      Target: {activeGoal.targetValue}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                      By {new Date(activeGoal.targetDate).toLocaleDateString()}
-                    </p>
+          {/* Active goals list */}
+          {activeGoals.length === 0 && !showGoalForm && (
+            <p className="text-sm text-slate-500 dark:text-slate-400 py-2">
+              No active goals yet — tap &ldquo;+ Add Goal&rdquo; to get started.
+            </p>
+          )}
+
+          {activeGoals.map((goal, i) => {
+            const CATEGORY_EMOJI: Record<string, string> = {
+              running: "🏃", weight_loss: "⚖️", body_shape: "💪", strength: "🏋️",
+            };
+            const isPrimary = i === 0;
+            return (
+              <div
+                key={goal.id}
+                className={`rounded-2xl p-4 ${
+                  isPrimary
+                    ? "bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/60 dark:to-purple-950/60 border border-indigo-200 dark:border-indigo-800"
+                    : "bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xl">{CATEGORY_EMOJI[goal.category] ?? "🎯"}</span>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 capitalize">
+                          {goal.category.replace("_", " ")}
+                        </p>
+                        {isPrimary && (
+                          <span className="rounded-full bg-indigo-100 dark:bg-indigo-900/50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+                            Primary
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        Target: {goal.targetValue} · By {new Date(goal.targetDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                      </p>
+                    </div>
                   </div>
-                  <span
-                    className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      activeGoal.status === "active"
-                        ? "bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200"
-                        : "bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-300"
-                    }`}
+                  <button
+                    onClick={() => handleArchiveGoal(goal.id)}
+                    disabled={archivingId === goal.id}
+                    className="rounded-lg px-2.5 py-1 text-xs font-medium text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-40"
                   >
-                    {activeGoal.status}
-                  </span>
+                    {archivingId === goal.id ? "…" : "Archive"}
+                  </button>
                 </div>
               </div>
+            );
+          })}
 
-              <button
-                onClick={() => setShowGoalForm(true)}
-                className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 text-white font-medium rounded-2xl transition-colors"
-              >
-                Edit Goal
-              </button>
-            </div>
-          ) : (
-            <div>
-              {activeGoal && (
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  Update your goal below:
-                </p>
-              )}
+          {/* Add goal form (inline) */}
+          {showGoalForm && (
+            <div className="border-t border-slate-100 dark:border-slate-800 pt-4 mt-2">
               <GoalForm
                 onSuccess={() => {
                   setShowGoalForm(false);
@@ -292,12 +314,6 @@ export function SettingsClient({ locale, activeGoal, fitToken, levelState }: Set
                 }}
               />
             </div>
-          )}
-
-          {!activeGoal && !showGoalForm && (
-            <p className="text-gray-600 dark:text-gray-400">
-              No active goal. Create one to get started.
-            </p>
           )}
         </div>
 

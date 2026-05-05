@@ -50,46 +50,38 @@ export const users = pgTable("users", {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// goals — one active per user; coach plans against this target
+// goals — multiple active goals per user supported (R3)
+// coach plans against the highest-priority active goal (running > others)
 // ─────────────────────────────────────────────────────────────────
-export const goals = pgTable(
-  "goals",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    // High-level category (Bug #6 Phase 1)
-    category: text("category", {
-      enum: ["running", "body_shape", "weight_loss", "strength"],
-    }).notNull().default("running"),
-    type: text("type", {
-      enum: ["5k_time", "10k_time", "weekly_volume_km", "sessions_per_week", "custom"],
-    }).notNull(),
-    targetValue: numeric("target_value", { precision: 10, scale: 2 }).notNull(),
-    targetUnit: text("target_unit", {
-      enum: ["sec", "km", "sessions", "free", "kg", "pct"],
-    }).notNull(),
-    targetDate: date("target_date").notNull(),
-    note: text("note"),
-    status: text("status", { enum: ["active", "achieved", "archived"] })
-      .notNull()
-      .default("active"),
-    // Body-shape / strength: user-set training mix (0-100, e.g. 60 = 60% primary modality)
-    trainingMixPct: integer("training_mix_pct"),
-    // Weight-loss: user's current actual weight (kg) at goal-creation time
-    currentValue: numeric("current_value", { precision: 10, scale: 2 }),
-    // Strength: target lifts as JSON {bench5rm, squat5rm, deadlift5rm}
-    targetLifts: jsonb("target_lifts"),
-    // Sessions per week target (used by all categories)
-    sessionsPerWeek: integer("sessions_per_week"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => ({
-    // Enforce a single active goal per user via partial unique index
-    oneActivePerUser: uniqueIndex("goals_one_active_per_user")
-      .on(t.userId)
-      .where(sql`${t.status} = 'active'`),
-  }),
-);
+export const goals = pgTable("goals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  // High-level category (Bug #6 Phase 1)
+  category: text("category", {
+    enum: ["running", "body_shape", "weight_loss", "strength"],
+  }).notNull().default("running"),
+  type: text("type", {
+    enum: ["5k_time", "10k_time", "weekly_volume_km", "sessions_per_week", "custom"],
+  }).notNull(),
+  targetValue: numeric("target_value", { precision: 10, scale: 2 }).notNull(),
+  targetUnit: text("target_unit", {
+    enum: ["sec", "km", "sessions", "free", "kg", "pct"],
+  }).notNull(),
+  targetDate: date("target_date").notNull(),
+  note: text("note"),
+  status: text("status", { enum: ["active", "achieved", "archived"] })
+    .notNull()
+    .default("active"),
+  // Body-shape / strength: user-set training mix (0-100, e.g. 60 = 60% primary modality)
+  trainingMixPct: integer("training_mix_pct"),
+  // Weight-loss: user's current actual weight (kg) at goal-creation time
+  currentValue: numeric("current_value", { precision: 10, scale: 2 }),
+  // Strength: target lifts as JSON {bench5rm, squat5rm, deadlift5rm}
+  targetLifts: jsonb("target_lifts"),
+  // Sessions per week target (used by all categories)
+  sessionsPerWeek: integer("sessions_per_week"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ─────────────────────────────────────────────────────────────────
 // body_metrics — weight / body-fat measurements (Bug #6 Phase 2)

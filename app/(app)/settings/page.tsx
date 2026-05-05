@@ -1,12 +1,13 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { users, goals, oauthTokens, userLevelState } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { SettingsClient } from "./SettingsClient";
 
-type Goal = {
+export type SettingsGoal = {
   id: string;
+  category: string;
   type: string;
   targetValue: string;
   targetDate: string;
@@ -36,20 +37,26 @@ export default async function SettingsPage() {
   const user = userResult[0];
   const locale = (user.locale as "en" | "he") || "en";
 
-  // Get active goal
-  let activeGoal: Goal | null = null;
+  // R3: Fetch ALL active goals (multi-goal support)
+  let activeGoals: SettingsGoal[] = [];
   try {
-    const goalResult = await db
+    const goalRows = await db
       .select()
       .from(goals)
-      .where(eq(goals.userId, user.id))
-      .limit(1);
+      .where(and(eq(goals.userId, user.id), eq(goals.status, "active")))
+      .orderBy(desc(goals.createdAt));
 
-    if (goalResult && goalResult.length > 0) {
-      activeGoal = goalResult[0] as Goal;
-    }
+    activeGoals = goalRows.map((g) => ({
+      id: g.id,
+      category: g.category,
+      type: g.type,
+      targetValue: g.targetValue,
+      targetDate: g.targetDate,
+      status: g.status,
+      note: g.note,
+    }));
   } catch (error) {
-    console.error("Error fetching active goal:", error);
+    console.error("Error fetching active goals:", error);
   }
 
   // Get Google Fit connection status
@@ -82,5 +89,5 @@ export default async function SettingsPage() {
     console.error("Error fetching level state:", e);
   }
 
-  return <SettingsClient locale={locale} activeGoal={activeGoal} fitToken={fitToken} levelState={levelState} />;
+  return <SettingsClient locale={locale} activeGoals={activeGoals} fitToken={fitToken} levelState={levelState} />;
 }
