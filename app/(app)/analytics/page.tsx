@@ -4,6 +4,7 @@ import { VolumeChart } from "@/components/analytics/VolumeChart";
 import { TrendChartCard } from "@/components/analytics/TrendChartCard";
 import { WeightTrendChart } from "@/components/analytics/WeightTrendChart";
 import { LiftProgressChart } from "@/components/analytics/LiftProgressChart";
+import { DailyActivityChart } from "@/components/analytics/DailyActivityChart";
 import { TrendingUp, TrendingDown, Minus, Footprints, Scale, Activity, Dumbbell } from "lucide-react";
 
 function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
@@ -50,7 +51,7 @@ export default async function AnalyticsPage() {
   const {
     sessions, weekly, coachLevel, freezeActive, avgRpe, fitSteps7dAvg,
     activeGoalCategory, activeGoalTargetValue, activeGoalTargetUnit,
-    bodyMetricHistory, liftHistory,
+    bodyMetricHistory, liftHistory, dailyActivity,
   } = data;
 
   // Stat tile calculations
@@ -238,6 +239,20 @@ export default async function AnalyticsPage() {
           <span>Base builder</span>
           <span>Race-ready</span>
         </div>
+      </div>
+
+      {/* ── Daily Activity (A3) — all goal categories ──────────────── */}
+      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+        <p className="mb-1 text-sm font-semibold">Daily Activity</p>
+        <p className="mb-4 text-[11px] text-muted-foreground">
+          <span className="inline-block h-2 w-4 rounded-full bg-indigo-500 align-middle opacity-75" /> Active time &nbsp;
+          <span className="inline-block h-2 w-4 rounded-full bg-orange-500 align-middle" /> Avg RPE
+        </p>
+        {dailyActivity.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
+        ) : (
+          <DailyActivityChart data={dailyActivity} />
+        )}
       </div>
     </div>
   );

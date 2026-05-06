@@ -46,6 +46,12 @@ export type LiftPoint = {
   date: string;       // "DD Mon"
 };
 
+export type DailyActivityPoint = {
+  day: string;        // "DD Mon" display label
+  activeMin: number;  // total minutes of logged activity
+  avgRpe: number;     // average RPE for that day (0 if no sessions)
+};
+
 export type AnalyticsData = {
   weekly: WeeklyBucket[];
   sessions: SessionPoint[];
@@ -64,6 +70,8 @@ export type AnalyticsData = {
   // Phase 3 — per-category data
   bodyMetricHistory: BodyMetricPoint[];   // weight_loss + body_shape
   liftHistory: LiftPoint[];               // strength
+  // A3 — daily activity (all goal categories)
+  dailyActivity: DailyActivityPoint[];
 };
 
 export async function getAnalyticsData(): Promise<AnalyticsData | null> {
@@ -89,7 +97,10 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   // EXTRACT(DOW ...) = 0 on Sunday, so subtracting it gives the preceding Sunday.
   const sundayExpr = sql`(DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem') - EXTRACT(DOW FROM (${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem'))::int)`;
 
-  const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics, activeGoal, bodyMetricRows, liftRows] = await Promise.all([
+  // A3: last 28 days for daily activity chart
+  const twentyEightDaysAgo = new Date(now.getTime() - 28 * 86_400_000);
+
+  const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics, activeGoal, bodyMetricRows, liftRows, dailyActivityRaw] = await Promise.all([
     // ── 12-week weekly volume buckets ─────────────────────────────────────
     db
       .select({
@@ -162,6 +173,18 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       .where(and(eq(strengthLogs.userId, user.id), gte(workoutLogs.performedAt, twelveWeeksAgo)))
       .orderBy(asc(workoutLogs.performedAt))
       .limit(200),
+
+    // ── A3: Daily activity — last 28 days (activeMin + avgRpe per day) ────
+    db
+      .select({
+        day: sql<string>`DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem')::text`,
+        activeMin: sql<number>`ROUND(SUM(COALESCE(${workoutLogs.durationSec}, 0)) / 60.0, 1)`,
+        avgRpe: sql<number>`ROUND(AVG(${workoutLogs.rpe})::numeric, 1)`,
+      })
+      .from(workoutLogs)
+      .where(and(eq(workoutLogs.userId, user.id), gte(workoutLogs.performedAt, twentyEightDaysAgo)))
+      .groupBy(sql`DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem')`)
+      .orderBy(asc(sql`DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem')`)),
   ]);
 
   // Shape weekly buckets — exact Sunday-key matching, no fuzzy window
@@ -243,6 +266,17 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   }
   const liftHistory: LiftPoint[] = Array.from(liftMap.values());
 
+  // Shape daily activity points
+  const dailyActivity: DailyActivityPoint[] = dailyActivityRaw.map((r) => ({
+    day: new Date(r.day + "T12:00:00").toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      timeZone: "Asia/Jerusalem",
+    }),
+    activeMin: Number(r.activeMin),
+    avgRpe: Number(r.avgRpe),
+  }));
+
   return {
     weekly,
     sessions,
@@ -260,5 +294,6 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     activeGoalCurrentValue: activeGoal?.currentValue ? parseFloat(activeGoal.currentValue) : null,
     bodyMetricHistory,
     liftHistory,
+    dailyActivity,
   };
 }
