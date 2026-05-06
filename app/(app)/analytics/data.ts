@@ -3,12 +3,16 @@
  *
  * Server-side data fetching for the Analytics page.
  * All queries run in parallel via Promise.all for performance.
+ *
+ * Week anchor : Sunday  (user preference)
+ * Timezone    : Asia/Jerusalem
  */
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workoutLogs, userLevelState, users, fitDailyMetrics, goals, bodyMetrics, strengthLogs } from "@/lib/db/schema";
 import { eq, sql, and, gte, asc } from "drizzle-orm";
+import { sundayOfWeekIL, sundayNWeeksAgo, toILDateString, weekLabel } from "@/lib/analytics/week";
 
 export type WeeklyBucket = {
   week: string; // "DD Mon" label
@@ -62,10 +66,6 @@ export type AnalyticsData = {
   liftHistory: LiftPoint[];               // strength
 };
 
-function fmtWeekLabel(d: Date): string {
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-}
-
 export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   const session = await auth();
   if (!session?.user?.email) return null;
@@ -75,29 +75,32 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   });
   if (!user) return null;
 
-  const twelveWeeksAgo = new Date();
-  twelveWeeksAgo.setDate(twelveWeeksAgo.getDate() - 84);
+  // ── Week anchors (Sunday, Asia/Jerusalem) ─────────────────────────────
+  const now = new Date();
+  const thisSunday = sundayOfWeekIL(now);
+  // Cutoff = start of the oldest of 12 Sunday-weeks we show
+  const twelveWeeksAgo = sundayNWeeksAgo(thisSunday, 11);
 
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const sevenDaysAgoDate = sevenDaysAgo.toISOString().slice(0, 10);
 
+  // SQL fragment for Sunday-anchored week date in Israel timezone
+  // EXTRACT(DOW ...) = 0 on Sunday, so subtracting it gives the preceding Sunday.
+  const sundayExpr = sql`(DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem') - EXTRACT(DOW FROM (${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem'))::int)`;
+
   const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics, activeGoal, bodyMetricRows, liftRows] = await Promise.all([
-    // ── 12-week weekly volume buckets (typed Drizzle select) ───────────────
+    // ── 12-week weekly volume buckets ─────────────────────────────────────
     db
       .select({
-        week: sql<string>`DATE_TRUNC('week', ${workoutLogs.performedAt} AT TIME ZONE 'UTC')`,
+        week: sql<string>`${sundayExpr}::text`,
         km: sql<number>`ROUND(SUM(COALESCE(${workoutLogs.distanceKm}, 0))::numeric, 2)`,
         sessions: sql<number>`COUNT(*)::int`,
       })
       .from(workoutLogs)
       .where(and(eq(workoutLogs.userId, user.id), gte(workoutLogs.performedAt, twelveWeeksAgo)))
-      .groupBy(
-        sql`DATE_TRUNC('week', ${workoutLogs.performedAt} AT TIME ZONE 'UTC')`,
-      )
-      .orderBy(
-        asc(sql`DATE_TRUNC('week', ${workoutLogs.performedAt} AT TIME ZONE 'UTC')`),
-      ),
+      .groupBy(sundayExpr)
+      .orderBy(asc(sundayExpr)),
 
     // ── Last 20 sessions for trend chart ──────────────────────────────────
     db
@@ -161,29 +164,21 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       .limit(200),
   ]);
 
-  // Shape weekly buckets — fill missing weeks with 0
+  // Shape weekly buckets — exact Sunday-key matching, no fuzzy window
+  // SQL returns "YYYY-MM-DD" strings (Sunday dates in Israel timezone)
   const weekMap = new Map<string, { km: number; sessions: number }>();
   for (const row of weeklyRaw) {
-    const d = new Date(row.week);
-    weekMap.set(d.toISOString(), { km: Number(row.km), sessions: Number(row.sessions) });
+    // row.week is "YYYY-MM-DD" from Postgres ::text cast
+    weekMap.set(row.week, { km: Number(row.km), sessions: Number(row.sessions) });
   }
 
-  // Build 12 consecutive week buckets
+  // Build 12 consecutive Sunday-anchored week buckets (oldest first)
   const weekly: WeeklyBucket[] = [];
-  const now = new Date();
   for (let i = 11; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - d.getDay() - i * 7); // Monday of that week
-    d.setHours(0, 0, 0, 0);
-    let found: { km: number; sessions: number } | undefined;
-    for (const [isoKey, v] of weekMap) {
-      const wd = new Date(isoKey);
-      if (Math.abs(wd.getTime() - d.getTime()) < 1000 * 60 * 60 * 24 * 2) {
-        found = v;
-        break;
-      }
-    }
-    weekly.push({ week: fmtWeekLabel(d), km: found?.km ?? 0, sessions: found?.sessions ?? 0 });
+    const sunday = sundayNWeeksAgo(thisSunday, i);
+    const key = toILDateString(sunday); // "YYYY-MM-DD" in Israel timezone — matches SQL output
+    const found = weekMap.get(key);
+    weekly.push({ week: weekLabel(sunday), km: found?.km ?? 0, sessions: found?.sessions ?? 0 });
   }
 
   // Shape session points
