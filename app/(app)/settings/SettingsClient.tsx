@@ -23,15 +23,18 @@ import { setLocale, disconnectGoogleFit, syncGoogleFit, setManualLevelOverride, 
 import { GoalForm } from "@/components/goals/GoalForm";
 import { archiveGoalById } from "@/lib/goals/actions";
 import type { SettingsGoal } from "./page";
+import { BodyMetricsSection } from "@/components/settings/BodyMetricsSection";
+import type { WeightEntry } from "@/components/settings/BodyMetricsSection";
 
 interface SettingsClientProps {
   locale: "en" | "he";
   activeGoals: SettingsGoal[];
+  weightEntries: WeightEntry[];
   fitToken: { status: string; lastSyncAt: Date | null } | null;
   levelState: { currentLevel: number; manualOverride: boolean; manualOverrideUntil: Date | null } | null;
 }
 
-export function SettingsClient({ locale, activeGoals, fitToken, levelState }: SettingsClientProps) {
+export function SettingsClient({ locale, activeGoals, weightEntries, fitToken, levelState }: SettingsClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isDark, setIsDark] = useState(false);
@@ -317,7 +320,10 @@ export function SettingsClient({ locale, activeGoals, fitToken, levelState }: Se
           )}
         </div>
 
-        {/* Section 3b: Training Level — Bug #9 */}
+        {/* Section 3b: Weight Log (A2) */}
+        <BodyMetricsSection entries={weightEntries} />
+
+        {/* Section 3c: Training Level — Bug #9 */}
         <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm p-5 space-y-4">
           <div className="flex items-center gap-3 mb-2">
             <Gauge className="w-5 h-5 text-indigo-600" />

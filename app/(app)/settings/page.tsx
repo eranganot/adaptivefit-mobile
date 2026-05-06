@@ -1,9 +1,10 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, goals, oauthTokens, userLevelState } from "@/lib/db/schema";
+import { users, goals, oauthTokens, userLevelState, bodyMetrics } from "@/lib/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { SettingsClient } from "./SettingsClient";
+import type { WeightEntry } from "@/components/settings/BodyMetricsSection";
 
 export type SettingsGoal = {
   id: string;
@@ -89,5 +90,34 @@ export default async function SettingsPage() {
     console.error("Error fetching level state:", e);
   }
 
-  return <SettingsClient locale={locale} activeGoals={activeGoals} fitToken={fitToken} levelState={levelState} />;
+  // A2: Fetch last 10 weight entries for the weight log section
+  let weightEntries: WeightEntry[] = [];
+  try {
+    const rows = await db
+      .select({ id: bodyMetrics.id, date: bodyMetrics.date, weightKg: bodyMetrics.weightKg })
+      .from(bodyMetrics)
+      .where(eq(bodyMetrics.userId, user.id))
+      .orderBy(desc(bodyMetrics.date))
+      .limit(10);
+
+    weightEntries = rows
+      .filter((r) => r.weightKg != null)
+      .map((r) => ({
+        id: r.id,
+        date: r.date,
+        weightKg: parseFloat(r.weightKg!),
+      }));
+  } catch (e) {
+    console.error("Error fetching weight entries:", e);
+  }
+
+  return (
+    <SettingsClient
+      locale={locale}
+      activeGoals={activeGoals}
+      fitToken={fitToken}
+      levelState={levelState}
+      weightEntries={weightEntries}
+    />
+  );
 }

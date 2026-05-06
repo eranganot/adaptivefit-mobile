@@ -1,7 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { getAnalyticsData } from "./data";
 import { VolumeChart } from "@/components/analytics/VolumeChart";
-import { TrendChart } from "@/components/analytics/TrendChart";
+import { TrendChartCard } from "@/components/analytics/TrendChartCard";
 import { WeightTrendChart } from "@/components/analytics/WeightTrendChart";
 import { LiftProgressChart } from "@/components/analytics/LiftProgressChart";
 import { TrendingUp, TrendingDown, Minus, Footprints, Scale, Activity, Dumbbell } from "lucide-react";
@@ -113,18 +113,10 @@ export default async function AnalyticsPage() {
       {/* ── Goal-specific analytics ────────────────────────────────── */}
       {activeGoalCategory === "running" && (
         <>
-          {/* RPE vs Pace dual-axis chart */}
+          {/* RPE / Distance vs Pace chart with toggle */}
           <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-1 text-sm font-semibold">{t("chart.rpePace")}</p>
-            <p className="mb-4 text-[11px] text-muted-foreground">
-              <span className="inline-block h-2 w-4 rounded-full bg-blue-600 align-middle" /> RPE &nbsp;
-              <span className="inline-block h-2 w-4 rounded-full bg-red-600 align-middle" /> Pace
-            </p>
-            {sessions.filter((s) => s.type === "run").length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">{t("noRuns")}</p>
-            ) : (
-              <TrendChart data={sessions} />
-            )}
+            <p className="mb-3 text-sm font-semibold">{t("chart.rpePace")}</p>
+            <TrendChartCard data={sessions} />
           </div>
 
           {/* Weekly distance bar chart */}
