@@ -68,6 +68,12 @@ export default async function AnalyticsPage() {
 
   const rpeIdeal = avgRpe >= 4 && avgRpe <= 7;
 
+  // Determine which goal-specific charts to surface in the bottom section.
+  const showLifts = activeGoalCategory === "strength" && liftHistory.length > 0;
+  const showBodyComposition =
+    activeGoalCategory === "body_shape" &&
+    bodyMetricHistory.filter((d) => d.bodyFatPct != null).length > 0;
+
   return (
     <div className="space-y-4">
       <div>
@@ -75,7 +81,7 @@ export default async function AnalyticsPage() {
         <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
       </div>
 
-      {/* ── Stat tiles ─────────────────────────────────────────────── */}
+      {/* ── 1. Stat tiles: Weekly distance + Avg RPE (same location) ─ */}
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -111,109 +117,67 @@ export default async function AnalyticsPage() {
         )}
       </div>
 
-      {/* ── Goal-specific analytics ────────────────────────────────── */}
-      {activeGoalCategory === "running" && (
-        <>
-          {/* RPE / Distance vs Pace chart with toggle */}
-          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-3 text-sm font-semibold">{t("chart.rpePace")}</p>
-            <TrendChartCard data={sessions} />
-          </div>
+      {/* ── 2. Daily Activity ───────────────────────────────────────── */}
+      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+        <p className="mb-1 text-sm font-semibold">Daily Activity</p>
+        <p className="mb-4 text-[11px] text-muted-foreground">
+          <span className="inline-block h-2 w-4 rounded-full bg-indigo-500 align-middle opacity-75" /> Active time &nbsp;
+          <span className="inline-block h-2 w-4 rounded-full bg-orange-500 align-middle" /> Avg RPE
+        </p>
+        {dailyActivity.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Log workouts to see your daily activity trend.
+          </p>
+        ) : (
+          <DailyActivityChart data={dailyActivity} />
+        )}
+      </div>
 
-          {/* Weekly distance bar chart */}
-          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-1 text-sm font-semibold">{t("chart.weeklyVol")}</p>
-            {sessions.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
-            ) : (
-              <VolumeChart data={weekly} />
-            )}
-          </div>
-        </>
-      )}
+      {/* ── 3. Weekly cardio sessions (count) ───────────────────────── */}
+      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+        <p className="mb-1 text-sm font-semibold">Weekly Cardio Sessions</p>
+        {sessions.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Log a cardio session to see your weekly count.
+          </p>
+        ) : (
+          <VolumeChart data={weekly} metric="sessions" />
+        )}
+      </div>
 
-      {activeGoalCategory === "weight_loss" && (
-        <>
-          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <div className="flex items-center gap-2 mb-3">
-              <Scale className="h-4 w-4 text-indigo-500" />
-              <p className="text-sm font-semibold">Weight Trend</p>
-            </div>
-            {bodyMetricHistory.filter((d) => d.weightKg != null).length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                No weight entries yet. Log your weight in Settings → Goal to start tracking.
-              </p>
-            ) : (
-              <WeightTrendChart
-                data={bodyMetricHistory}
-                targetWeightKg={activeGoalTargetUnit === "kg" ? activeGoalTargetValue : null}
-              />
-            )}
-          </div>
-          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-1 text-sm font-semibold">Weekly Cardio Sessions</p>
-            {sessions.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
-            ) : (
-              <VolumeChart data={weekly} />
-            )}
-          </div>
-        </>
-      )}
+      {/* ── 4. Distance × Pace toggle (TrendChartCard) ──────────────── */}
+      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+        <p className="mb-3 text-sm font-semibold">{t("chart.rpePace")}</p>
+        {sessions.filter((s) => s.paceMinPerKm != null).length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Log a run to see pace trends.
+          </p>
+        ) : (
+          <TrendChartCard data={sessions} />
+        )}
+      </div>
 
-      {activeGoalCategory === "body_shape" && (
-        <>
-          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <div className="flex items-center gap-2 mb-3">
-              <Activity className="h-4 w-4 text-indigo-500" />
-              <p className="text-sm font-semibold">Body Composition</p>
-            </div>
-            {bodyMetricHistory.filter((d) => d.bodyFatPct != null || d.weightKg != null).length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                No body metrics yet. Log weight & body fat in Settings → Goal to track progress.
-              </p>
-            ) : (
-              <WeightTrendChart data={bodyMetricHistory} targetWeightKg={null} />
-            )}
-          </div>
-          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-1 text-sm font-semibold">Weekly Training Volume</p>
-            {sessions.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
-            ) : (
-              <VolumeChart data={weekly} />
-            )}
-          </div>
-        </>
-      )}
+      {/* ── 5. Weight trend ─────────────────────────────────────────── */}
+      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+        <div className="flex items-center gap-2 mb-3">
+          <Scale className="h-4 w-4 text-indigo-500" />
+          <p className="text-sm font-semibold">Weight Trend</p>
+        </div>
+        {bodyMetricHistory.filter((d) => d.weightKg != null).length === 0 ? (
+          <p className="py-4 text-center text-xs text-muted-foreground">
+            No weight entries yet. Log your weight in Settings to start tracking.
+          </p>
+        ) : (
+          <WeightTrendChart
+            data={bodyMetricHistory}
+            targetWeightKg={
+              activeGoalTargetUnit === "kg" ? activeGoalTargetValue : null
+            }
+          />
+        )}
+      </div>
 
-      {activeGoalCategory === "strength" && (
-        <>
-          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <div className="flex items-center gap-2 mb-3">
-              <Dumbbell className="h-4 w-4 text-indigo-500" />
-              <p className="text-sm font-semibold">Lift Progression (kg)</p>
-            </div>
-            {liftHistory.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                No strength sessions logged yet. Log a strength workout to start tracking your lifts.
-              </p>
-            ) : (
-              <LiftProgressChart data={liftHistory} />
-            )}
-          </div>
-          <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-            <p className="mb-1 text-sm font-semibold">Weekly Session Volume</p>
-            {sessions.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
-            ) : (
-              <VolumeChart data={weekly} />
-            )}
-          </div>
-        </>
-      )}
-
-      {/* ── Coach level ────────────────────────────────────────────── */}
+      {/* ── 6. Coach level ──────────────────────────────────────────── */}
       <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
         <div className="flex items-center justify-between">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -241,19 +205,26 @@ export default async function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ── Daily Activity (A3) — all goal categories ──────────────── */}
-      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-        <p className="mb-1 text-sm font-semibold">Daily Activity</p>
-        <p className="mb-4 text-[11px] text-muted-foreground">
-          <span className="inline-block h-2 w-4 rounded-full bg-indigo-500 align-middle opacity-75" /> Active time &nbsp;
-          <span className="inline-block h-2 w-4 rounded-full bg-orange-500 align-middle" /> Avg RPE
-        </p>
-        {dailyActivity.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">{t("noSessions")}</p>
-        ) : (
-          <DailyActivityChart data={dailyActivity} />
-        )}
-      </div>
+      {/* ── Goal-specific insights (only when relevant data exists) ─── */}
+      {showLifts && (
+        <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+          <div className="flex items-center gap-2 mb-3">
+            <Dumbbell className="h-4 w-4 text-indigo-500" />
+            <p className="text-sm font-semibold">Lift Progression (kg)</p>
+          </div>
+          <LiftProgressChart data={liftHistory} />
+        </div>
+      )}
+
+      {showBodyComposition && (
+        <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
+          <div className="flex items-center gap-2 mb-3">
+            <Activity className="h-4 w-4 text-indigo-500" />
+            <p className="text-sm font-semibold">Body Composition (body fat %)</p>
+          </div>
+          <WeightTrendChart data={bodyMetricHistory} targetWeightKg={null} />
+        </div>
+      )}
     </div>
   );
 }

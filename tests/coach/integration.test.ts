@@ -52,13 +52,33 @@ function makeLog(overrides: Partial<WorkoutLog> & { symptoms?: string[] } = {}):
 }
 
 function makeState(
-  overrides: Partial<Pick<UserLevelState, "currentLevel" | "greenSessionCount" | "freezeActive" | "freezeReason">> = {},
-): Pick<UserLevelState, "currentLevel" | "greenSessionCount" | "freezeActive" | "freezeReason"> {
+  overrides: Partial<
+    Pick<
+      UserLevelState,
+      | "currentLevel"
+      | "greenSessionCount"
+      | "freezeActive"
+      | "freezeReason"
+      | "manualOverride"
+      | "manualOverrideUntil"
+    >
+  > = {},
+): Pick<
+  UserLevelState,
+  | "currentLevel"
+  | "greenSessionCount"
+  | "freezeActive"
+  | "freezeReason"
+  | "manualOverride"
+  | "manualOverrideUntil"
+> {
   return {
     currentLevel: 1,
     greenSessionCount: 0,
     freezeActive: false,
     freezeReason: null,
+    manualOverride: false,
+    manualOverrideUntil: null,
     ...overrides,
   };
 }

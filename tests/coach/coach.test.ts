@@ -45,6 +45,8 @@ const baseState = {
   greenSessionCount: 0,
   freezeActive: false,
   freezeReason: null,
+  manualOverride: false,
+  manualOverrideUntil: null,
 };
 
 describe("coach: hard freeze", () => {

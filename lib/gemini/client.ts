@@ -16,7 +16,10 @@ export function gemini(): GoogleGenerativeAI {
   return _client;
 }
 
+// Model defaults: gemini-1.5-* was deprecated by Google. We default to the
+// 2.5 series. Override via GEMINI_MODEL_FAST / GEMINI_MODEL_DEEP env vars when
+// new generations land. Production must also update the Railway env vars.
 export const MODELS = {
-  FAST: process.env.GEMINI_MODEL_FAST ?? "gemini-1.5-flash",
-  DEEP: process.env.GEMINI_MODEL_DEEP ?? "gemini-1.5-pro",
+  FAST: process.env.GEMINI_MODEL_FAST ?? "gemini-2.5-flash",
+  DEEP: process.env.GEMINI_MODEL_DEEP ?? "gemini-2.5-pro",
 };

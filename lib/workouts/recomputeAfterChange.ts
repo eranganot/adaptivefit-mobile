@@ -50,9 +50,6 @@ export async function recomputeAfterChange(userId: string): Promise<void> {
     const sentMap = new Map(sentiments.map((s) => [s.workoutLogId, s]));
     const logsWithSentiment = recentRaw.map((l) => ({ ...l, sentiment: sentMap.get(l.id) ?? null }));
 
-    const prevLevel = stateRow?.currentLevel ?? 1;
-    const prevFreeze = stateRow?.freezeActive ?? false;
-
     const coachResult = evaluateCoach({
       recentLogs: logsWithSentiment,
       state: stateRow ?? {
@@ -77,17 +74,14 @@ export async function recomputeAfterChange(userId: string): Promise<void> {
         set: { currentLevel, greenSessionCount, freezeActive, freezeReason, lastEvaluatedAt: new Date() },
       });
 
-    const shouldRegen =
-      (freezeActive && !prevFreeze) ||
-      (!freezeActive && prevFreeze) ||
-      currentLevel !== prevLevel;
-
-    if (shouldRegen) {
-      try {
-        await regenerateRoadmapForUser(userId);
-      } catch (e) {
-        console.error("[recomputeAfterChange] regenerateRoadmap non-fatal:", e);
-      }
+    // Always regenerate the roadmap after any workout change. The regenerator
+    // pulls fresh state + history + goal, so it produces an updated plan in
+    // response to RPE / pain / symptoms / volume changes — not just the rare
+    // freeze/level-change events.
+    try {
+      await regenerateRoadmapForUser(userId);
+    } catch (e) {
+      console.error("[recomputeAfterChange] regenerateRoadmap non-fatal:", e);
     }
   } catch (e) {
     console.error("[recomputeAfterChange] error:", e);

@@ -49,6 +49,13 @@ export function useRunTracker(): RunTrackerState & RunTrackerActions {
   const isPausedRef = useRef(false);
   const startedAtRef = useRef<Date | null>(null);
 
+  // Mirror the live values into refs so end() can read them synchronously.
+  // React 18+ batches state updates, so reading state right after setState()
+  // returns stale values — we'd lose the user's distance/route/duration on Stop.
+  const routeRef = useRef<GpsRawPoint[]>([]);
+  const distanceKmRef = useRef(0);
+  const secondsElapsedRef = useRef(0);
+
   // ── GPS watcher ────────────────────────────────────────────────
   const startWatcher = useCallback(() => {
     if (!navigator.geolocation) {
@@ -67,25 +74,26 @@ export function useRunTracker(): RunTrackerState & RunTrackerActions {
         };
 
         if (!isPointValid(point, lastAcceptedRef.current)) return;
+        if (isPausedRef.current) return; // don't accumulate while paused
 
         const prev = lastAcceptedRef.current;
         const segKm = prev ? haversineKm(prev.lat, prev.lon, point.lat, point.lon) : 0;
         lastAcceptedRef.current = point;
 
-        setState((s) => {
-          if (isPausedRef.current) return s; // don't accumulate while paused
-          const newRoute = [...s.route, point];
-          const newDist = s.distanceKm + segKm;
-          const pace = windowedPace(newRoute);
-          return {
-            ...s,
-            status: "running",
-            distanceKm: newDist,
-            paceSecPerKm: pace,
-            currentPosition: { lat: point.lat, lon: point.lon },
-            route: newRoute,
-          };
-        });
+        // Update refs synchronously so end() always sees the latest values.
+        routeRef.current = [...routeRef.current, point];
+        distanceKmRef.current = distanceKmRef.current + segKm;
+        const pace = windowedPace(routeRef.current);
+
+        // Update React state for the UI.
+        setState((s) => ({
+          ...s,
+          status: "running",
+          distanceKm: distanceKmRef.current,
+          paceSecPerKm: pace,
+          currentPosition: { lat: point.lat, lon: point.lon },
+          route: routeRef.current,
+        }));
       },
       (err) => {
         setState((s) => ({ ...s, error: `GPS error: ${err.message}` }));
@@ -105,7 +113,8 @@ export function useRunTracker(): RunTrackerState & RunTrackerActions {
   const startTimer = useCallback(() => {
     timerRef.current = setInterval(() => {
       if (!isPausedRef.current) {
-        setState((s) => ({ ...s, secondsElapsed: s.secondsElapsed + 1 }));
+        secondsElapsedRef.current = secondsElapsedRef.current + 1;
+        setState((s) => ({ ...s, secondsElapsed: secondsElapsedRef.current }));
       }
     }, 1000);
   }, []);
@@ -122,6 +131,11 @@ export function useRunTracker(): RunTrackerState & RunTrackerActions {
     const now = new Date();
     startedAtRef.current = now;
     isPausedRef.current = false;
+    // Reset live-value refs for a fresh run
+    routeRef.current = [];
+    distanceKmRef.current = 0;
+    secondsElapsedRef.current = 0;
+    lastAcceptedRef.current = null;
     setState({ ...INITIAL_STATE, status: "acquiring", startedAt: now });
     startWatcher();
     startTimer();
@@ -149,20 +163,17 @@ export function useRunTracker(): RunTrackerState & RunTrackerActions {
     const startedAt = startedAtRef.current;
     if (!startedAt) return null;
 
-    let finalState: RunTrackerState | null = null;
-    setState((s) => {
-      finalState = { ...s, status: "ended" };
-      return finalState;
-    });
+    // Mark UI state as ended (async — but we don't depend on it for the return value).
+    setState((s) => ({ ...s, status: "ended" }));
 
-    // Give setState a chance to flush; return snapshot synchronously
-    // The caller gets route from state after end()
+    // Read from refs — these are guaranteed to be the latest values regardless
+    // of React's batching behavior.
     return {
       startedAt,
       endedAt,
-      points: finalState ? (finalState as RunTrackerState).route : [],
-      distanceKm: finalState ? (finalState as RunTrackerState).distanceKm : 0,
-      durationSec: finalState ? (finalState as RunTrackerState).secondsElapsed : 0,
+      points: routeRef.current,
+      distanceKm: distanceKmRef.current,
+      durationSec: secondsElapsedRef.current,
     };
   }, [stopWatcher, stopTimer]);
 

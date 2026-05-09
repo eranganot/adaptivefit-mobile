@@ -46,6 +46,9 @@ export default function RunSummary({
   const avgPaceSec = distanceKm > 0 ? Math.round(durationSec / distanceKm) : 0;
   const splits = computeSplits(points);
 
+  // Detect degraded GPS capture so we can warn the user instead of showing all-zero stats.
+  const noGpsData = points.length === 0 && distanceKm === 0 && durationSec === 0;
+
   // Fastest split for relative bar widths
   const fastestSplit = splits.length > 0
     ? Math.min(...splits.map((s) => s.paceSec))
@@ -66,6 +69,13 @@ export default function RunSummary({
           {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
         </p>
       </div>
+
+      {/* Degraded GPS warning */}
+      {noGpsData && (
+        <div className="rounded-2xl bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          No GPS data was captured for this run. You can still log it manually below — just enter how it felt.
+        </div>
+      )}
 
       {/* Route snapshot */}
       <MapboxLiveMap

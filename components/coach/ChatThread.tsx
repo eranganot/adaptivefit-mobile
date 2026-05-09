@@ -40,9 +40,28 @@ export function ChatThread({ workoutLogId, initialMessages }: ChatThreadProps) {
 
     try {
       const result = await coachChatTurn(text, workoutLogId);
-      const replyText = "error" in result
-        ? "Sorry, something went wrong. Please try again."
-        : result.reply;
+      let replyText: string;
+      if ("error" in result) {
+        // Per-code user-facing copy. Underlying error is logged server-side.
+        switch (result.code) {
+          case "auth":
+            replyText = "Sign in again to chat with your coach.";
+            break;
+          case "limit":
+            replyText = "This thread reached its 10-turn limit. Start a fresh thread by ending this workout.";
+            break;
+          case "gemini":
+            replyText = "Coach service is temporarily unavailable. Try again in a minute.";
+            break;
+          case "db":
+            replyText = "Couldn't save your message. Try again.";
+            break;
+          default:
+            replyText = "Sorry, something went wrong. Please try again.";
+        }
+      } else {
+        replyText = result.reply;
+      }
 
       const assistantMsg: ChatMessage = {
         id: `opt-reply-${Date.now()}`,

@@ -178,8 +178,19 @@ export default function HomeClient({
       try {
         const response = await coachChatTurn(message, workoutLogId);
         if ("error" in response) {
-          console.error("Chat error:", response.error);
-          return "Sorry, something went wrong. Please try again.";
+          console.error("Chat error:", response.code, response.error);
+          switch (response.code) {
+            case "auth":
+              return "Sign in again to chat with your coach.";
+            case "limit":
+              return "This thread reached its 10-turn limit. Start a fresh thread by ending this workout.";
+            case "gemini":
+              return "Coach service is temporarily unavailable. Try again in a minute.";
+            case "db":
+              return "Couldn't save your message. Try again.";
+            default:
+              return "Sorry, something went wrong. Please try again.";
+          }
         }
         return response.reply;
       } catch (error) {

@@ -120,18 +120,14 @@ export async function logManualWorkout(input: {
         set: { currentLevel, greenSessionCount, freezeActive, freezeReason, lastEvaluatedAt: new Date() },
       });
 
-    // Regenerate roadmap if coach FSM triggered a freeze or level promotion
-    const prevLevel = stateRow?.currentLevel ?? 1;
-    const prevFreeze = stateRow?.freezeActive ?? false;
-    const shouldRegen =
-      (freezeActive && !prevFreeze) ||          // freeze just activated
-      currentLevel > prevLevel;                  // level promoted
-    if (shouldRegen) {
-      try {
-        await regenerateRoadmapForUser(user.id);
-      } catch (e) {
-        console.error("regenerateRoadmap non-fatal:", e);
-      }
+    // Always regenerate the roadmap after a logged workout. The regenerator
+    // pulls fresh state + history + active goal, so it naturally produces an
+    // updated plan in response to RPE / pain / symptoms / volume changes.
+    // Non-fatal: a regen failure must not fail the workout log.
+    try {
+      await regenerateRoadmapForUser(user.id);
+    } catch (e) {
+      console.error("regenerateRoadmap non-fatal:", e);
     }
 
     // 5. Gemini post-workout summary (non-fatal — workout is already saved)
@@ -156,38 +152,67 @@ export async function logManualWorkout(input: {
   }
 }
 
+export type CoachChatErrorCode = "auth" | "limit" | "gemini" | "db" | "unknown";
+
+export type CoachChatResult =
+  | { reply: string }
+  | { error: string; code: CoachChatErrorCode };
+
 export async function coachChatTurn(
   message: string,
   workoutLogId: string,
-): Promise<{ reply: string } | { error: string }> {
+): Promise<CoachChatResult> {
+  // 1. Auth + user lookup
+  let userId: string;
   try {
     const session = await auth();
-    if (!session?.user?.email) return { error: "Not authenticated" };
+    if (!session?.user?.email) return { error: "Not authenticated", code: "auth" };
 
     const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
-    if (!user) return { error: "User not found" };
+    if (!user) return { error: "User not found", code: "auth" };
+    userId = user.id;
+  } catch (err) {
+    console.error("coachChatTurn auth/user error:", err);
+    return { error: err instanceof Error ? err.message : "Auth error", code: "auth" };
+  }
 
-    // Enforce 20-message cap (10 turns)
+  // 2. 20-message cap (10 turns)
+  try {
     const existing = await db.select().from(coachChatMessages).where(
-      and(eq(coachChatMessages.userId, user.id), eq(coachChatMessages.workoutLogId, workoutLogId)),
+      and(eq(coachChatMessages.userId, userId), eq(coachChatMessages.workoutLogId, workoutLogId)),
     );
-    if (existing.length >= 20) return { error: "Chat limit reached (10 turns)" };
+    if (existing.length >= 20) {
+      return { error: "Chat limit reached (10 turns)", code: "limit" };
+    }
+  } catch (err) {
+    console.error("coachChatTurn cap-check db error:", err);
+    return { error: err instanceof Error ? err.message : "Database error", code: "db" };
+  }
 
-    await db.insert(coachChatMessages).values({ userId: user.id, workoutLogId, role: "user", content: message });
+  // 3. Persist user message + load context
+  let history: string;
+  try {
+    await db.insert(coachChatMessages).values({ userId, workoutLogId, role: "user", content: message });
 
-    // Last 10 messages for context
     const context = await db
       .select()
       .from(coachChatMessages)
-      .where(and(eq(coachChatMessages.userId, user.id), eq(coachChatMessages.workoutLogId, workoutLogId)))
+      .where(and(eq(coachChatMessages.userId, userId), eq(coachChatMessages.workoutLogId, workoutLogId)))
       .orderBy(desc(coachChatMessages.createdAt))
       .limit(10);
 
-    const history = context
+    history = context
       .reverse()
       .map((m) => `${m.role === "user" ? "Athlete" : "Coach"}: ${m.content}`)
       .join("\n");
+  } catch (err) {
+    console.error("coachChatTurn persist/context db error:", err);
+    return { error: err instanceof Error ? err.message : "Database error", code: "db" };
+  }
 
+  // 4. Gemini call
+  let reply: string;
+  try {
     const model = gemini().getGenerativeModel({
       model: MODELS.FAST,
       systemInstruction:
@@ -198,15 +223,25 @@ export async function coachChatTurn(
     const res = await model.generateContent(
       `${history}\n\nAthlete: ${message}\n\nCoach:`,
     );
-    const reply = res.response.text().trim();
-
-    await db.insert(coachChatMessages).values({ userId: user.id, workoutLogId, role: "assistant", content: reply });
-
-    return { reply };
+    reply = res.response.text().trim();
+    if (!reply) {
+      // Gemini returned empty text (content filter or empty completion) — surface as gemini error
+      return { error: "Coach returned empty reply", code: "gemini" };
+    }
   } catch (err) {
-    console.error("coachChatTurn error:", err);
-    return { error: err instanceof Error ? err.message : "Chat error" };
+    console.error("coachChatTurn gemini error:", err);
+    return { error: err instanceof Error ? err.message : "Gemini error", code: "gemini" };
   }
+
+  // 5. Persist assistant reply (non-fatal — user already saw the typing indicator end with their message)
+  try {
+    await db.insert(coachChatMessages).values({ userId, workoutLogId, role: "assistant", content: reply });
+  } catch (err) {
+    console.error("coachChatTurn persist-reply db error (non-fatal):", err);
+    // Still return the reply to the user — it's better than nothing.
+  }
+
+  return { reply };
 }
 
 export type ChatMessage = {
