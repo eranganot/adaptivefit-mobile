@@ -189,8 +189,12 @@ export async function coachChatTurn(
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
   }
 
-  // 3. Persist user message + load context
+  // 3. Persist user message + load context (history + workout details + goal + state)
   let history: string;
+  let workoutContext = "";
+  let goalContext = "";
+  let stateContext = "";
+  let detectedLocale: "en" | "he" = "en";
   try {
     await db.insert(coachChatMessages).values({ userId, workoutLogId, role: "user", content: message });
 
@@ -205,6 +209,77 @@ export async function coachChatTurn(
       .reverse()
       .map((m) => `${m.role === "user" ? "Athlete" : "Coach"}: ${m.content}`)
       .join("\n");
+
+    // Detect locale: Hebrew chars in messages or workout note → reply in Hebrew
+    const hebrewRe = /[֐-׿]/;
+    if (hebrewRe.test(message)) detectedLocale = "he";
+
+    // Pull the workout this thread is about + its sentiment, so the coach
+    // can ground replies in actual data instead of generic platitudes.
+    const workout = await db.query.workoutLogs.findFirst({
+      where: eq(workoutLogs.id, workoutLogId),
+    });
+    if (workout) {
+      const sentiment = await db.query.feedbackSentiment.findFirst({
+        where: eq(feedbackSentiment.workoutLogId, workout.id),
+      });
+      const performedAt = new Date(workout.performedAt).toLocaleDateString("en-GB", {
+        weekday: "short", day: "numeric", month: "short",
+      });
+      const dist = workout.distanceKm ? `${parseFloat(workout.distanceKm)} km` : "no distance";
+      const dur = workout.durationSec
+        ? `${Math.floor(workout.durationSec / 60)}:${String(workout.durationSec % 60).padStart(2, "0")}`
+        : "no duration";
+      const pace = workout.paceSecPerKm
+        ? `${Math.floor(workout.paceSecPerKm / 60)}:${String(workout.paceSecPerKm % 60).padStart(2, "0")}/km`
+        : "n/a";
+      const symptoms = sentiment?.symptoms?.length ? sentiment.symptoms.join(", ") : "none reported";
+      const aiSummary = sentiment?.aiSummaryEn ?? "no AI summary";
+      const notes = workout.notesRaw?.trim() || "no notes";
+
+      workoutContext =
+        `## Workout being discussed (${performedAt})\n` +
+        `- Type: ${workout.type}\n` +
+        `- Distance: ${dist}, Duration: ${dur}, Pace: ${pace}\n` +
+        `- RPE (1-10): ${workout.rpe}, Foot pain (0-10): ${workout.footPain}\n` +
+        `- Other pain: ${workout.otherPain ?? "none"}\n` +
+        `- Athlete's notes: "${notes}"\n` +
+        `- Detected symptoms: ${symptoms}\n` +
+        `- AI summary: ${aiSummary}\n`;
+
+      if (workout.notesLocale === "he") detectedLocale = "he";
+    }
+
+    // Active goal (single primary)
+    const activeGoal = await db.query.goals.findFirst({
+      where: and(eq(goals.userId, userId), eq(goals.status, "active")),
+      orderBy: (g, { desc: d }) => [d(g.createdAt)],
+    });
+    if (activeGoal) {
+      const targetVal =
+        activeGoal.targetUnit === "sec"
+          ? `${Math.floor(parseFloat(activeGoal.targetValue) / 60)}:${String(Math.floor(parseFloat(activeGoal.targetValue) % 60)).padStart(2, "0")}`
+          : `${parseFloat(activeGoal.targetValue)} ${activeGoal.targetUnit}`;
+      goalContext =
+        `## Active goal\n` +
+        `- Category: ${activeGoal.category}\n` +
+        `- Type: ${activeGoal.type}\n` +
+        `- Target: ${targetVal} by ${activeGoal.targetDate}\n` +
+        (activeGoal.currentValue ? `- Current: ${parseFloat(activeGoal.currentValue)} ${activeGoal.targetUnit}\n` : "") +
+        (activeGoal.note ? `- Note: ${activeGoal.note}\n` : "");
+    }
+
+    // Coach state
+    const stateRow = await db.query.userLevelState.findFirst({
+      where: eq(userLevelState.userId, userId),
+    });
+    if (stateRow) {
+      stateContext =
+        `## Coach state\n` +
+        `- Level: ${stateRow.currentLevel}/10\n` +
+        `- Freeze active: ${stateRow.freezeActive ? `YES (${stateRow.freezeReason ?? "unspecified"})` : "no"}\n` +
+        (stateRow.manualOverride ? `- Manual level override active until ${stateRow.manualOverrideUntil?.toISOString().slice(0, 10)}\n` : "");
+    }
   } catch (err) {
     console.error("coachChatTurn persist/context db error:", err);
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
@@ -213,16 +288,38 @@ export async function coachChatTurn(
   // 4. Gemini call
   let reply: string;
   try {
+    const localeInstruction =
+      detectedLocale === "he"
+        ? "The athlete writes in Hebrew. Reply in Hebrew."
+        : "The athlete writes in English. Reply in English.";
+
+    const systemInstruction =
+      `You are an experienced personal running coach for Eran. ` +
+      `Eran is a runner currently rehabbing plantar fasciitis (foot pain), so you prioritize injury prevention and conservative progression over chasing volume or speed. ` +
+      `\n\nCoaching style:\n` +
+      `- Be specific and actionable. Reference Eran's actual workout details (distance, RPE, pain, symptoms, notes) when answering — don't reply with generic platitudes.\n` +
+      `- Match the depth of the question. A short check-in deserves a short answer; a substantive question deserves a thoughtful 4-8 sentence reply with reasoning.\n` +
+      `- Ask follow-up questions when something is unclear or when more context would help (e.g. "Where exactly is the pain — heel, arch, or forefoot?").\n` +
+      `- Talk like a real coach who knows the athlete: warm, candid, willing to push back gently when the athlete proposes something risky for the rehab.\n` +
+      `- Use concrete training language: pace ranges, RPE targets, time-on-feet, recovery cues. Avoid vague phrases like "a well-structured workout."\n` +
+      `- If recommending changes (rest day, swap workout, reduce volume), explain WHY based on the data above.\n` +
+      `- Never recommend pushing through sharp foot pain.\n\n` +
+      localeInstruction;
+
+    const userPrompt =
+      [workoutContext, goalContext, stateContext]
+        .filter((s) => s.length > 0)
+        .join("\n") +
+      `\n\n## Conversation so far\n${history || "(this is the first message)"}\n\n` +
+      `Now respond to the athlete's latest message as their coach.`;
+
     const model = gemini().getGenerativeModel({
       model: MODELS.FAST,
-      systemInstruction:
-        "You are a conservative running coach. The athlete just logged a workout. Respond in 2-3 concise sentences.",
-      generationConfig: { temperature: 0.5, maxOutputTokens: 150 },
+      systemInstruction,
+      generationConfig: { temperature: 0.7, maxOutputTokens: 600 },
     });
 
-    const res = await model.generateContent(
-      `${history}\n\nAthlete: ${message}\n\nCoach:`,
-    );
+    const res = await model.generateContent(userPrompt);
     reply = res.response.text().trim();
     if (!reply) {
       // Gemini returned empty text (content filter or empty completion) — surface as gemini error

@@ -74,48 +74,57 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
 
   const sessionsToCreate = [];
 
+  // Compute today's day-of-week as Mon=0..Sun=6 so we can skip past sessions
+  // in week 0 (regen often runs mid-week → Tuesday is already in the past).
+  const todayJsDow = new Date().getDay();
+  const todayDayIndex = todayJsDow === 0 ? 6 : todayJsDow - 1; // Mon=0..Sun=6
+
   for (let weekIdx = 0; weekIdx < 2; weekIdx++) {
     const pd = periodize({ weekIndex: weekIdx, targetDate });
 
-    // Session 1 (Tue) — quality / push day
-    const tueResult = evaluateCoach({
-      recentLogs,
-      state: simulatedState,
-      today: new Date(),
-      sessionKind: "quality",
-      goalCategory,
-      periodize: { volumeMultiplier: pd.volumeMultiplier, levelOffset: pd.levelOffset },
-    });
-    sessionsToCreate.push({
-      userId,
-      goalId: activeGoal?.id ?? null,
-      weekIndex: weekIdx,
-      dayIndex: 1, // Tuesday
-      sessionPlan: tueResult.todayPlan,
-      status: "pending" as const,
-      createdAt: new Date(),
-    });
-    simulatedState = advanceState(simulatedState, tueResult.newState);
+    // Tuesday (dayIndex 1) — quality / push day. Skip if Tue is already past in week 0.
+    if (weekIdx > 0 || todayDayIndex <= 1) {
+      const tueResult = evaluateCoach({
+        recentLogs,
+        state: simulatedState,
+        today: new Date(),
+        sessionKind: "quality",
+        goalCategory,
+        periodize: { volumeMultiplier: pd.volumeMultiplier, levelOffset: pd.levelOffset },
+      });
+      sessionsToCreate.push({
+        userId,
+        goalId: activeGoal?.id ?? null,
+        weekIndex: weekIdx,
+        dayIndex: 1, // Tuesday
+        sessionPlan: tueResult.todayPlan,
+        status: "pending" as const,
+        createdAt: new Date(),
+      });
+      simulatedState = advanceState(simulatedState, tueResult.newState);
+    }
 
-    // Session 2 (Fri) — endurance / pull+legs day
-    const friResult = evaluateCoach({
-      recentLogs,
-      state: simulatedState,
-      today: new Date(),
-      sessionKind: "endurance",
-      goalCategory,
-      periodize: { volumeMultiplier: pd.volumeMultiplier, levelOffset: pd.levelOffset },
-    });
-    sessionsToCreate.push({
-      userId,
-      goalId: activeGoal?.id ?? null,
-      weekIndex: weekIdx,
-      dayIndex: 4, // Friday
-      sessionPlan: friResult.todayPlan,
-      status: "pending" as const,
-      createdAt: new Date(),
-    });
-    simulatedState = advanceState(simulatedState, friResult.newState);
+    // Friday (dayIndex 4) — endurance / pull+legs day. Skip if Fri is already past in week 0.
+    if (weekIdx > 0 || todayDayIndex <= 4) {
+      const friResult = evaluateCoach({
+        recentLogs,
+        state: simulatedState,
+        today: new Date(),
+        sessionKind: "endurance",
+        goalCategory,
+        periodize: { volumeMultiplier: pd.volumeMultiplier, levelOffset: pd.levelOffset },
+      });
+      sessionsToCreate.push({
+        userId,
+        goalId: activeGoal?.id ?? null,
+        weekIndex: weekIdx,
+        dayIndex: 4, // Friday
+        sessionPlan: friResult.todayPlan,
+        status: "pending" as const,
+        createdAt: new Date(),
+      });
+      simulatedState = advanceState(simulatedState, friResult.newState);
+    }
   }
 
   if (sessionsToCreate.length > 0) {

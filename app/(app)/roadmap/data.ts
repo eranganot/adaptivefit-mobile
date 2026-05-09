@@ -90,7 +90,10 @@ export async function getRoadmapData(userId: string): Promise<{
     .orderBy(desc(workoutLogs.performedAt));
 
   // 6. Build sessions array with status derivation
-  const sessions: RoadmapSession[] = roadmapRows.map((row) => {
+  const todayMidnight = new Date(today);
+  todayMidnight.setHours(0, 0, 0, 0);
+
+  const sessionsRaw: (RoadmapSession & { isPastPending: boolean })[] = roadmapRows.map((row) => {
     // Derive date: startOfWeek + (weekIndex * 7) + dayIndex
     const sessionDate = new Date(startOfWeek);
     sessionDate.setDate(startOfWeek.getDate() + row.weekIndex * 7 + row.dayIndex);
@@ -116,6 +119,15 @@ export async function getRoadmapData(userId: string): Promise<{
       status = "completed";
     }
 
+    // A "past pending" row is one whose calendar date is in the past, was
+    // never marked completed in DB, and has no matching log. These are stale
+    // entries from a previous regen (e.g. the May 5 phantom) and should be
+    // hidden from the user's forward-looking roadmap view.
+    const sessionMidnight = new Date(sessionDate);
+    sessionMidnight.setHours(0, 0, 0, 0);
+    const isPastPending =
+      status === "planned" && sessionMidnight.getTime() < todayMidnight.getTime();
+
     return {
       id: row.id,
       date: sessionDate,
@@ -126,8 +138,15 @@ export async function getRoadmapData(userId: string): Promise<{
         detail: formatBlockDetail(block),
       })),
       adjustedNote,
+      isPastPending,
     };
   });
+
+  // Hide past-pending rows from the roadmap view. They remain in the DB for
+  // audit; they're just confusing as "next workout" framing.
+  const sessions: RoadmapSession[] = sessionsRaw
+    .filter((s) => !s.isPastPending)
+    .map(({ isPastPending: _ignore, ...rest }) => rest);
 
   return {
     sessions,
