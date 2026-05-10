@@ -42,6 +42,12 @@ export interface HomeClientProps {
   name: string;
   greetingKey: "greetingMorning" | "greetingAfternoon" | "greetingEvening";
   todayPlan: SessionPlan | null;
+  /** True when todayPlan came from a training_roadmap row matching today's date.
+   *  False when it's the FSM fallback (no roadmap row for today). */
+  todayPlanIsFromRoadmap: boolean;
+  /** The calendar date the todayPlan card represents. Always today when there's
+   *  a roadmap row for today; defaults to today when falling back to FSM. */
+  todayPlanDate: Date;
   coachLevel: number;
   freezeActive: boolean;
   freezeReason: string | null;
@@ -59,6 +65,8 @@ export default function HomeClient({
   name,
   greetingKey,
   todayPlan,
+  todayPlanIsFromRoadmap,
+  todayPlanDate,
   coachLevel: _coachLevel,
   freezeActive: _freezeActive,
   freezeReason: _freezeReason,
@@ -220,6 +228,8 @@ export default function HomeClient({
           name={name}
           greetingKey={greetingKey}
           todayPlan={todayPlan}
+          todayPlanIsFromRoadmap={todayPlanIsFromRoadmap}
+          todayPlanDate={todayPlanDate}
           loggedToday={loggedToday}
           todayLogCount={todayLogCount}
           aiSummary={aiSummary}

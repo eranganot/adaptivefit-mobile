@@ -254,6 +254,10 @@ export const coachChatMessages = pgTable(
     role: text("role", { enum: ["user", "assistant"] }).notNull(),
     content: text("content").notNull(),
     locale: text("locale", { enum: ["en", "he"] }),
+    // Records which Gemini model produced this assistant message. Useful for
+    // debugging quality regressions ("when did chat get worse?"). Null for
+    // user messages and for legacy rows written before this column existed.
+    modelUsed: text("model_used"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

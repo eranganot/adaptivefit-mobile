@@ -158,12 +158,22 @@ export type CoachChatResult =
   | { reply: string }
   | { error: string; code: CoachChatErrorCode };
 
+// Hard cap to prevent runaway threads. With rolling-window context (we send
+// only the last N messages to Gemini), this cap is a safety net rather than
+// a typical-conversation limit.
+const CHAT_HARD_CAP_MESSAGES = 100; // 50 user/assistant turns
+
+// Number of recent messages we send to Gemini per turn. The full history is
+// always persisted; this just bounds the prompt size.
+const CHAT_CONTEXT_WINDOW = 20;
+
 export async function coachChatTurn(
   message: string,
   workoutLogId: string,
 ): Promise<CoachChatResult> {
   // 1. Auth + user lookup
   let userId: string;
+  let displayName: string | null = null;
   try {
     const session = await auth();
     if (!session?.user?.email) return { error: "Not authenticated", code: "auth" };
@@ -171,48 +181,56 @@ export async function coachChatTurn(
     const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
     if (!user) return { error: "User not found", code: "auth" };
     userId = user.id;
+    displayName = user.displayName ?? null;
   } catch (err) {
     console.error("coachChatTurn auth/user error:", err);
     return { error: err instanceof Error ? err.message : "Auth error", code: "auth" };
   }
 
-  // 2. 20-message cap (10 turns)
+  // 2. Hard-cap check (rare safety net, not a typical-conversation limit)
   try {
     const existing = await db.select().from(coachChatMessages).where(
       and(eq(coachChatMessages.userId, userId), eq(coachChatMessages.workoutLogId, workoutLogId)),
     );
-    if (existing.length >= 20) {
-      return { error: "Chat limit reached (10 turns)", code: "limit" };
+    if (existing.length >= CHAT_HARD_CAP_MESSAGES) {
+      return {
+        error: `Chat thread reached ${CHAT_HARD_CAP_MESSAGES / 2}-turn safety cap`,
+        code: "limit",
+      };
     }
   } catch (err) {
     console.error("coachChatTurn cap-check db error:", err);
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
   }
 
-  // 3. Persist user message + load context (history + workout details + goal + state)
-  let history: string;
+  // 3. Persist user message + load context (rolling window of last N + workout/goal/state)
+  type HistoryTurn = { role: "user" | "model"; text: string };
+  let history: HistoryTurn[] = [];
   let workoutContext = "";
   let goalContext = "";
   let stateContext = "";
-  let detectedLocale: "en" | "he" = "en";
   try {
     await db.insert(coachChatMessages).values({ userId, workoutLogId, role: "user", content: message });
 
-    const context = await db
+    // Load last N (CHAT_CONTEXT_WINDOW), reverse to oldest-first.
+    // The user's just-inserted message is the last entry; we'll strip it before
+    // passing as history (since the API treats the latest user message as the
+    // turn we're sending).
+    const recent = await db
       .select()
       .from(coachChatMessages)
       .where(and(eq(coachChatMessages.userId, userId), eq(coachChatMessages.workoutLogId, workoutLogId)))
       .orderBy(desc(coachChatMessages.createdAt))
-      .limit(10);
+      .limit(CHAT_CONTEXT_WINDOW);
 
-    history = context
-      .reverse()
-      .map((m) => `${m.role === "user" ? "Athlete" : "Coach"}: ${m.content}`)
-      .join("\n");
-
-    // Detect locale: Hebrew chars in messages or workout note → reply in Hebrew
-    const hebrewRe = /[֐-׿]/;
-    if (hebrewRe.test(message)) detectedLocale = "he";
+    // recent is newest-first; reverse to oldest-first, then drop the latest user
+    // message (we'll send it as the prompt itself).
+    const oldestFirst = recent.reverse();
+    const withoutLatest = oldestFirst.slice(0, -1);
+    history = withoutLatest.map((m) => ({
+      role: m.role === "user" ? "user" : "model",
+      text: m.content,
+    }));
 
     // Pull the workout this thread is about + its sentiment, so the coach
     // can ground replies in actual data instead of generic platitudes.
@@ -246,8 +264,6 @@ export async function coachChatTurn(
         `- Athlete's notes: "${notes}"\n` +
         `- Detected symptoms: ${symptoms}\n` +
         `- AI summary: ${aiSummary}\n`;
-
-      if (workout.notesLocale === "he") detectedLocale = "he";
     }
 
     // Active goal (single primary)
@@ -285,44 +301,59 @@ export async function coachChatTurn(
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
   }
 
-  // 4. Gemini call
+  // 4. Gemini call — gemini-2.5-pro chat session, English-only, 4096 token budget
   let reply: string;
+  const modelName = MODELS.DEEP; // gemini-2.5-pro for coaching prose
   try {
-    const localeInstruction =
-      detectedLocale === "he"
-        ? "The athlete writes in Hebrew. Reply in Hebrew."
-        : "The athlete writes in English. Reply in English.";
+    const athleteName = displayName?.trim() || "Eran";
 
     const systemInstruction =
-      `You are an experienced personal running coach for Eran. ` +
-      `Eran is a runner currently rehabbing plantar fasciitis (foot pain), so you prioritize injury prevention and conservative progression over chasing volume or speed. ` +
-      `\n\nCoaching style:\n` +
-      `- Be specific and actionable. Reference Eran's actual workout details (distance, RPE, pain, symptoms, notes) when answering — don't reply with generic platitudes.\n` +
-      `- Match the depth of the question. A short check-in deserves a short answer; a substantive question deserves a thoughtful 4-8 sentence reply with reasoning.\n` +
-      `- Ask follow-up questions when something is unclear or when more context would help (e.g. "Where exactly is the pain — heel, arch, or forefoot?").\n` +
-      `- Talk like a real coach who knows the athlete: warm, candid, willing to push back gently when the athlete proposes something risky for the rehab.\n` +
+      `You are an experienced personal running coach for ${athleteName}. ` +
+      `${athleteName} is a runner currently rehabbing plantar fasciitis (foot pain). Your job is to give specific, ` +
+      `data-grounded coaching that prioritizes injury prevention and conservative progression over chasing volume or speed.\n\n` +
+      `## Hard rules\n` +
+      `- ALWAYS reply in English, even if the athlete writes in Hebrew or another language. The athlete is bilingual; English is more token-efficient.\n` +
+      `- ALWAYS finish your sentences. Never end mid-word or mid-clause. If you're running out of room, wrap up cleanly rather than cutting off.\n` +
+      `- Never recommend pushing through sharp foot pain.\n` +
+      `- Refer to the athlete by name (${athleteName}). Don't transliterate or shorten the name.\n\n` +
+      `## Coaching style\n` +
+      `- Be specific and actionable. Reference the athlete's actual workout data (distance, RPE, pain, symptoms, notes) when answering. Don't reply with generic platitudes.\n` +
+      `- Match the depth of the question. A short check-in deserves a 1-2 sentence reply; a substantive question deserves a thoughtful 4-8 sentence reply with reasoning.\n` +
+      `- Ask follow-up questions when more context would help (e.g. "Where exactly is the pain — heel, arch, or forefoot?").\n` +
       `- Use concrete training language: pace ranges, RPE targets, time-on-feet, recovery cues. Avoid vague phrases like "a well-structured workout."\n` +
-      `- If recommending changes (rest day, swap workout, reduce volume), explain WHY based on the data above.\n` +
-      `- Never recommend pushing through sharp foot pain.\n\n` +
-      localeInstruction;
-
-    const userPrompt =
-      [workoutContext, goalContext, stateContext]
-        .filter((s) => s.length > 0)
-        .join("\n") +
-      `\n\n## Conversation so far\n${history || "(this is the first message)"}\n\n` +
-      `Now respond to the athlete's latest message as their coach.`;
+      `- Be warm, candid, willing to push back gently when the athlete proposes something risky for the rehab.\n` +
+      `- If recommending changes (rest day, swap workout, reduce volume), explain WHY based on the data above. (You can suggest these in plain text — a future version of the app will let you propose plan changes that the athlete approves.)\n\n` +
+      `## Example of a good substantive reply\n` +
+      `Q: "Should I push harder on Friday's run?"\n` +
+      `A: "Tempting, but I'd hold the line, ${athleteName}. Your foot pain on the last two runs was 4 and 5 — both above the 3 we use as a green-light threshold. Pushing intensity Friday risks bumping that into the 6+ range and triggering a freeze week. Stick with the planned 5×600m at your current effort target, and let's reassess after Sunday. If pain stays under 3 across both runs this week, we'll add a rep next Tuesday."\n`;
 
     const model = gemini().getGenerativeModel({
-      model: MODELS.FAST,
+      model: modelName,
       systemInstruction,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 600 },
+      generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
     });
 
-    const res = await model.generateContent(userPrompt);
+    // Build the contextual preamble — sent as the first user turn alongside
+    // the actual question, so the model has full grounding for this reply.
+    const contextPreamble = [workoutContext, goalContext, stateContext]
+      .filter((s) => s.length > 0)
+      .join("\n");
+
+    // Use the chat-session API with proper turn structure.
+    const chat = model.startChat({
+      history: history.map((h) => ({
+        role: h.role,
+        parts: [{ text: h.text }],
+      })),
+    });
+
+    const fullPrompt = contextPreamble
+      ? `${contextPreamble}\n\n---\n\n${message}`
+      : message;
+
+    const res = await chat.sendMessage(fullPrompt);
     reply = res.response.text().trim();
     if (!reply) {
-      // Gemini returned empty text (content filter or empty completion) — surface as gemini error
       return { error: "Coach returned empty reply", code: "gemini" };
     }
   } catch (err) {
@@ -330,12 +361,17 @@ export async function coachChatTurn(
     return { error: err instanceof Error ? err.message : "Gemini error", code: "gemini" };
   }
 
-  // 5. Persist assistant reply (non-fatal — user already saw the typing indicator end with their message)
+  // 5. Persist assistant reply with the model name stamped (non-fatal)
   try {
-    await db.insert(coachChatMessages).values({ userId, workoutLogId, role: "assistant", content: reply });
+    await db.insert(coachChatMessages).values({
+      userId,
+      workoutLogId,
+      role: "assistant",
+      content: reply,
+      modelUsed: modelName,
+    });
   } catch (err) {
     console.error("coachChatTurn persist-reply db error (non-fatal):", err);
-    // Still return the reply to the user — it's better than nothing.
   }
 
   return { reply };

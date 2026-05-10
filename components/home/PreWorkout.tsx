@@ -11,6 +11,10 @@ interface PreWorkoutProps {
   name: string;
   greetingKey: "greetingMorning" | "greetingAfternoon" | "greetingEvening";
   todayPlan: SessionPlan | null;
+  /** True when todayPlan came from a training_roadmap row matching today's date. */
+  todayPlanIsFromRoadmap: boolean;
+  /** The calendar date the todayPlan card represents. */
+  todayPlanDate: Date;
   loggedToday: boolean;
   todayLogCount: number;
   aiSummary: string | null;
@@ -31,6 +35,8 @@ export default function PreWorkout({
   name,
   greetingKey,
   todayPlan,
+  todayPlanIsFromRoadmap,
+  todayPlanDate,
   loggedToday,
   todayLogCount,
   aiSummary,
@@ -44,6 +50,13 @@ export default function PreWorkout({
   const router = useRouter();
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  // Format today's date for the plan card label, e.g. "Today · Sat May 9"
+  const todayLabel = `Today · ${new Date(todayPlanDate).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  })}`;
+
   return (
     <div className="space-y-4">
       {/* Greeting */}
@@ -52,7 +65,18 @@ export default function PreWorkout({
           {t(`home.${greetingKey}`, { name })}
         </h1>
         {todayPlan && (
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{todayPlan.title}</p>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+              {todayLabel}
+            </span>
+            <span className="text-xs text-slate-500 dark:text-slate-500">·</span>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              {todayPlan.title}
+              {!todayPlanIsFromRoadmap && (
+                <span className="ml-1 text-xs text-slate-400">(suggested)</span>
+              )}
+            </p>
+          </div>
         )}
       </div>
 
@@ -169,8 +193,8 @@ export default function PreWorkout({
         </div>
       )}
 
-      {/* Next workout card (Bug #4 — shown after logging today) */}
-      {loggedToday && nextSession && (
+      {/* Next workout card — always shown when a future session exists in the roadmap */}
+      {nextSession && (
         <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
           <div className="flex items-center gap-2 mb-2">
             <CalendarCheck className="h-4 w-4 text-indigo-500" />

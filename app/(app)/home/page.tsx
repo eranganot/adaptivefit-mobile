@@ -69,47 +69,63 @@ export default async function HomePage() {
     goalCategory,
   });
 
-  // Next pending roadmap session (Bug #4: shown when already logged today)
+  // ─── Plan resolution: training_roadmap is the single source of truth ───
+  // Today's plan = the roadmap row whose calendar date matches today, if any.
+  // If no row matches today (e.g. Wed/Thu/Sat/Sun in our Tue/Fri pattern),
+  // fall through to the FSM's todayPlan as a "suggested rest / mobility day"
+  // indicator.
+  // Next session = the first pending roadmap row whose date is strictly in
+  // the future (regardless of whether the user logged today).
+  let todayRoadmapPlan: SessionPlan | null = null;
+  let todayRoadmapDate: Date | null = null;
   let nextSession: { title: string; date: Date; plan: SessionPlan } | null = null;
-  if (loggedToday) {
-    try {
-      const today = new Date();
-      const dayOfWeek = today.getDay();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-      startOfWeek.setHours(0, 0, 0, 0);
+  try {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+    startOfWeek.setHours(0, 0, 0, 0);
 
-      const pendingRows = await db
-        .select()
-        .from(trainingRoadmap)
-        .where(
-          and(
-            eq(trainingRoadmap.userId, user.id),
-            eq(trainingRoadmap.status, "pending"),
-          ),
-        )
-        .orderBy(trainingRoadmap.weekIndex, trainingRoadmap.dayIndex)
-        .limit(5);
+    const todayMidnight = new Date(today);
+    todayMidnight.setHours(0, 0, 0, 0);
 
-      // Find the first session that is in the future
-      const todayDate = new Date();
-      todayDate.setHours(0, 0, 0, 0);
-      for (const row of pendingRows) {
-        const sessionDate = new Date(startOfWeek);
-        sessionDate.setDate(startOfWeek.getDate() + row.weekIndex * 7 + row.dayIndex);
-        if (sessionDate > todayDate) {
-          nextSession = {
-            title: (row.sessionPlan as SessionPlan).title,
-            date: sessionDate,
-            plan: row.sessionPlan as SessionPlan,
-          };
-          break;
-        }
+    const pendingRows = await db
+      .select()
+      .from(trainingRoadmap)
+      .where(
+        and(
+          eq(trainingRoadmap.userId, user.id),
+          eq(trainingRoadmap.status, "pending"),
+        ),
+      )
+      .orderBy(trainingRoadmap.weekIndex, trainingRoadmap.dayIndex);
+
+    for (const row of pendingRows) {
+      const sessionDate = new Date(startOfWeek);
+      sessionDate.setDate(startOfWeek.getDate() + row.weekIndex * 7 + row.dayIndex);
+      const sessionMidnight = new Date(sessionDate);
+      sessionMidnight.setHours(0, 0, 0, 0);
+
+      if (sessionMidnight.getTime() === todayMidnight.getTime() && !todayRoadmapPlan) {
+        todayRoadmapPlan = row.sessionPlan as SessionPlan;
+        todayRoadmapDate = sessionDate;
+      } else if (sessionMidnight.getTime() > todayMidnight.getTime() && !nextSession) {
+        nextSession = {
+          title: (row.sessionPlan as SessionPlan).title,
+          date: sessionDate,
+          plan: row.sessionPlan as SessionPlan,
+        };
       }
-    } catch (e) {
-      console.error("nextSession non-fatal:", e);
+      if (todayRoadmapPlan && nextSession) break;
     }
+  } catch (e) {
+    console.error("plan resolution non-fatal:", e);
   }
+
+  // Today's plan card content + label. Roadmap row wins; FSM fallback otherwise.
+  const todayPlanForCard: SessionPlan = todayRoadmapPlan ?? coachResult.todayPlan;
+  const todayPlanIsFromRoadmap = todayRoadmapPlan !== null;
+  const todayPlanDate: Date = todayRoadmapDate ?? new Date();
 
   // Last 2 coach messages for chat preview (Bug #4)
   let lastChatMessages: { role: string; content: string }[] = [];
@@ -157,7 +173,9 @@ export default async function HomePage() {
     <HomeClient
       name={name}
       greetingKey={greetingKey as "greetingMorning" | "greetingAfternoon" | "greetingEvening"}
-      todayPlan={coachResult.todayPlan}
+      todayPlan={todayPlanForCard}
+      todayPlanIsFromRoadmap={todayPlanIsFromRoadmap}
+      todayPlanDate={todayPlanDate}
       coachLevel={stateRow?.currentLevel ?? 1}
       freezeActive={stateRow?.freezeActive ?? false}
       freezeReason={stateRow?.freezeReason ?? null}
