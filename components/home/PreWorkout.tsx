@@ -57,6 +57,13 @@ export default function PreWorkout({
     day: "numeric",
   })}`;
 
+  // What to show as today's headline: roadmap title if we have one for today,
+  // otherwise an explicit "Rest day" indicator so the user isn't confused by
+  // a generic FSM fallback they perceive as "no workout."
+  const todayHeadline = todayPlanIsFromRoadmap
+    ? todayPlan?.title ?? "Today's session"
+    : "Rest day — recovery focus";
+
   return (
     <div className="space-y-4">
       {/* Greeting */}
@@ -64,20 +71,15 @@ export default function PreWorkout({
         <h1 className="text-2xl font-bold tracking-tight">
           {t(`home.${greetingKey}`, { name })}
         </h1>
-        {todayPlan && (
-          <div className="mt-1 flex items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
-              {todayLabel}
-            </span>
-            <span className="text-xs text-slate-500 dark:text-slate-500">·</span>
-            <p className="text-sm text-slate-600 dark:text-slate-400">
-              {todayPlan.title}
-              {!todayPlanIsFromRoadmap && (
-                <span className="ml-1 text-xs text-slate-400">(suggested)</span>
-              )}
-            </p>
-          </div>
-        )}
+        <div className="mt-1 flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+            {todayLabel}
+          </span>
+          <span className="text-xs text-slate-500 dark:text-slate-500">·</span>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            {todayHeadline}
+          </p>
+        </div>
       </div>
 
       {/* Yesterday's Fit stats strip — shown only when Google Fit is connected */}
@@ -101,8 +103,8 @@ export default function PreWorkout({
         </div>
       )}
 
-      {/* Coach Insight Card */}
-      {todayPlan && (
+      {/* Coach Insight Card — shown when we have a real planned session for today */}
+      {todayPlanIsFromRoadmap && todayPlan?.rationale && (
         <div className="rounded-3xl bg-gradient-to-br from-indigo-500 to-purple-600 p-5 text-white shadow-lg">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-white/20">
@@ -113,8 +115,32 @@ export default function PreWorkout({
         </div>
       )}
 
-      {/* Workout Steps Timeline */}
-      {todayPlan && todayPlan.blocks.length > 0 && (
+      {/* Rest-day card — shown when no roadmap row matches today */}
+      {!todayPlanIsFromRoadmap && (
+        <div className="rounded-3xl bg-slate-100 dark:bg-slate-800/60 p-5">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700">
+              <Sparkles className="h-6 w-6 text-slate-500 dark:text-slate-400" />
+            </div>
+            <div className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+              <p className="font-semibold mb-1">No structured workout planned for today.</p>
+              <p>
+                Use today for active recovery — easy walking, mobility, foam-rolling, or stretching.
+                {nextSession && (
+                  <>
+                    {" "}Your next planned workout is <span className="font-semibold">
+                      {new Date(nextSession.date).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+                    </span>.
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Workout Steps Timeline — only when we have actual blocks from the roadmap */}
+      {todayPlanIsFromRoadmap && todayPlan && todayPlan.blocks.length > 0 && (
         <div className="space-y-3">
           {todayPlan.blocks.map((block, idx) => {
             let title = "";

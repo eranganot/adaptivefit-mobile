@@ -142,6 +142,19 @@ export function ChatThread({ workoutLogId, initialMessages }: ChatThreadProps) {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              // Belt-and-suspenders for mobile keyboards that don't fire form
+              // submit on Enter. Without this, the soft keyboard "Enter" key
+              // can dismiss the keyboard or behave inconsistently across
+              // Android Chrome versions.
+              if (e.key === "Enter" && !e.shiftKey && !isSending && input.trim()) {
+                e.preventDefault();
+                handleSend(e as unknown as React.FormEvent);
+              }
+            }}
+            enterKeyHint="send"
+            inputMode="text"
+            autoComplete="off"
             placeholder="Ask your coach anything…"
             disabled={isSending}
             className="flex-1 rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"

@@ -144,9 +144,34 @@ export async function getRoadmapData(userId: string): Promise<{
 
   // Hide past-pending rows from the roadmap view. They remain in the DB for
   // audit; they're just confusing as "next workout" framing.
-  const sessions: RoadmapSession[] = sessionsRaw
+  let sessions: RoadmapSession[] = sessionsRaw
     .filter((s) => !s.isPastPending)
     .map(({ isPastPending: _ignore, ...rest }) => rest);
+
+  // If no session row exists for today, inject a synthetic "Rest day" card so
+  // the user always sees something explicit for today instead of having to
+  // infer "no card means rest" from absence. This card is purely display —
+  // not stored in DB.
+  const hasTodaySession = sessions.some((s) => {
+    const d = new Date(s.date);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() === todayMidnight.getTime();
+  });
+  if (!hasTodaySession) {
+    const todayDate = new Date(todayMidnight);
+    sessions = [
+      {
+        id: `synthetic-today-${todayDate.toISOString().slice(0, 10)}`,
+        date: todayDate,
+        title: "Rest day",
+        status: "planned" as const,
+        blocks: [
+          { label: "Recovery", detail: "Easy walking, mobility, foam-rolling, or stretching" },
+        ],
+      },
+      ...sessions,
+    ];
+  }
 
   return {
     sessions,

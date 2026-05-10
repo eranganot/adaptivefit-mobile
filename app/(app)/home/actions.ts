@@ -301,9 +301,16 @@ export async function coachChatTurn(
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
   }
 
-  // 4. Gemini call — gemini-2.5-pro chat session, English-only, 4096 token budget
+  // 4. Gemini call — chat session, English-only, 4096 token budget.
+  //
+  // Model choice: gemini-2.5-flash. We tried gemini-2.5-pro but the
+  // @google/generative-ai SDK (0.21) doesn't handle Pro's thinking-token
+  // accounting properly — Pro consumes the maxOutputTokens budget on internal
+  // reasoning that doesn't appear in response.text(), producing empty replies.
+  // Flash works cleanly with the existing SDK and at 4096 tokens with the
+  // strong system prompt below it produces solid coaching prose.
   let reply: string;
-  const modelName = MODELS.DEEP; // gemini-2.5-pro for coaching prose
+  const modelName = MODELS.FAST; // gemini-2.5-flash
   try {
     const athleteName = displayName?.trim() || "Eran";
 
