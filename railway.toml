@@ -6,7 +6,9 @@ builder = "NIXPACKS"
 buildCommand = "pnpm install --no-frozen-lockfile && pnpm build"
 
 [deploy]
-preDeployCommand = "pnpm db:push"
+# Run pending migrations (non-interactive). Replaces `drizzle-kit push` which
+# prompts and hangs in non-TTY environments.
+preDeployCommand = "pnpm db:migrate"
 startCommand = "pnpm start"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 120

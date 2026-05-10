@@ -16,12 +16,15 @@ import { periodize } from "@/lib/coach/periodize";
  * (progressive planning, Bug #3).
  */
 export async function regenerateRoadmapForUser(userId: string): Promise<void> {
+  // Non-destructive regen: only delete rows we created ourselves (source='auto').
+  // Manually-added sessions and coach-proposed adjustments survive every regen.
   await db
     .delete(trainingRoadmap)
     .where(
       and(
         eq(trainingRoadmap.userId, userId),
         eq(trainingRoadmap.status, "pending"),
+        eq(trainingRoadmap.source, "auto"),
       ),
     );
 
@@ -99,6 +102,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
         dayIndex: 1, // Tuesday
         sessionPlan: tueResult.todayPlan,
         status: "pending" as const,
+        source: "auto" as const,
         createdAt: new Date(),
       });
       simulatedState = advanceState(simulatedState, tueResult.newState);
@@ -121,6 +125,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
         dayIndex: 4, // Friday
         sessionPlan: friResult.todayPlan,
         status: "pending" as const,
+        source: "auto" as const,
         createdAt: new Date(),
       });
       simulatedState = advanceState(simulatedState, friResult.newState);

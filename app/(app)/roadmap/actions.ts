@@ -96,6 +96,88 @@ export async function setManualLevel(
 }
 
 /**
+ * Add a custom session to the roadmap. Stamped source='manual' so the
+ * auto-regenerator never deletes it. Use for one-off workouts that don't fit
+ * the standard Tue/Fri template (e.g. weekend long runs, makeup sessions).
+ *
+ * Inputs:
+ *   targetDate — ISO YYYY-MM-DD, must be today or future
+ *   title — display title for the card
+ *   distanceKm — for run blocks
+ *   paceSecPerKm — pace in seconds per km (e.g. 435 = 7:15/km)
+ *   notes — optional rationale shown in the Coach Insight Card
+ */
+export async function addManualRoadmapSession(input: {
+  targetDate: string;
+  title: string;
+  distanceKm: number;
+  paceSecPerKm: number;
+  notes?: string;
+}): Promise<{ success: true; sessionId: string } | { success: false; error: string }> {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) return { success: false, error: "Not authenticated" };
+    const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
+    if (!user) return { success: false, error: "User not found" };
+
+    // Compute weekIndex / dayIndex relative to this Monday
+    const today = new Date();
+    const dow = today.getDay();
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const targetDateObj = new Date(input.targetDate);
+    targetDateObj.setHours(0, 0, 0, 0);
+    const todayMidnight = new Date(today);
+    todayMidnight.setHours(0, 0, 0, 0);
+    if (targetDateObj < todayMidnight) {
+      return { success: false, error: "Cannot schedule in the past." };
+    }
+
+    const daysDiff = Math.round(
+      (targetDateObj.getTime() - startOfWeek.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    const weekIndex = Math.floor(daysDiff / 7);
+    const dayIndex = daysDiff % 7;
+
+    const plan: SessionPlan = {
+      title: input.title.trim() || "Custom session",
+      blocks: [
+        {
+          kind: "run_block",
+          distanceKm: input.distanceKm,
+          paceSecPerKm: input.paceSecPerKm,
+          reps: 1,
+          recoverySec: 0,
+        },
+      ],
+      rationale: input.notes?.trim() || "Manually added by you.",
+    };
+
+    const [row] = await db
+      .insert(trainingRoadmap)
+      .values({
+        userId: user.id,
+        goalId: null,
+        weekIndex,
+        dayIndex,
+        sessionPlan: plan,
+        status: "pending" as const,
+        source: "manual" as const, // Survives auto-regen
+      })
+      .returning({ id: trainingRoadmap.id });
+
+    revalidatePath("/roadmap");
+    revalidatePath("/home");
+    return { success: true, sessionId: row.id };
+  } catch (e) {
+    console.error("[addManualRoadmapSession] error:", e);
+    return { success: false, error: "Failed to add session." };
+  }
+}
+
+/**
  * Delete a specific pending roadmap session (e.g. to remove a misplaced workout).
  */
 export async function deleteRoadmapSession(

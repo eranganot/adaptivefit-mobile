@@ -204,6 +204,13 @@ export const trainingRoadmap = pgTable("training_roadmap", {
   })
     .notNull()
     .default("pending"),
+  // Origin of this row — controls whether the auto-regenerator may delete it.
+  //   'auto'           : created by regenerateRoadmapForUser. Safe to delete on regen.
+  //   'manual'         : added by the user via the roadmap UI. Must survive regen.
+  //   'coach_proposal' : applied from a chat-coach proposal. Must survive regen.
+  source: text("source", { enum: ["auto", "manual", "coach_proposal"] })
+    .notNull()
+    .default("auto"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
