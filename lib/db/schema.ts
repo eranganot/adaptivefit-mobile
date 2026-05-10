@@ -275,6 +275,49 @@ export const coachChatMessages = pgTable(
     ),
   }),
 );
+
+// ─────────────────────────────────────────────────────────────────
+// coach_chat_actions — propose-and-approve plan changes from chat
+// ─────────────────────────────────────────────────────────────────
+// When the chat coach emits a function call (a proposal to soften a session,
+// swap to rest, freeze a week, or record a symptom), it's stored here as
+// `pending`. Nothing changes in the plan until the user explicitly approves.
+//
+// Status lifecycle:
+//   pending  → approved  → reverted   (user approved, then undid)
+//   pending  → approved                (user approved and kept)
+//   pending  → declined                (user declined the proposal)
+//
+// The `reversal` JSON captures whatever state the apply step changed, so
+// undo can restore the previous values without re-deriving them.
+export const coachChatActions = pgTable(
+  "coach_chat_actions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    chatMessageId: uuid("chat_message_id")
+      .notNull()
+      .references(() => coachChatMessages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    actionType: text("action_type", {
+      enum: ["soften_session", "swap_to_rest", "freeze_week", "record_symptom"],
+    }).notNull(),
+    params: jsonb("params").notNull(), // shape varies per action_type
+    reason: text("reason").notNull(),
+    status: text("status", {
+      enum: ["pending", "approved", "declined", "reverted"],
+    }).notNull().default("pending"),
+    // Snapshot of pre-apply state used by revert. Null until apply runs.
+    reversal: jsonb("reversal"),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    revertedAt: timestamp("reverted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    messageIdx: index("coach_chat_actions_message_idx").on(t.chatMessageId),
+    userStatusIdx: index("coach_chat_actions_user_status_idx").on(t.userId, t.status),
+  }),
+);
+
 // ─────────────────────────────────────────────────────────────────
 // run_sessions — one row per GPS-tracked run (Phase 2)
 // ─────────────────────────────────────────────────────────────────
@@ -410,6 +453,8 @@ export type ColdStartAnalysis = typeof coldStartAnalysis.$inferSelect;
 export type WorkoutPhoto = typeof workoutPhotos.$inferSelect;
 export type CoachChatMessage = typeof coachChatMessages.$inferSelect;
 export type NewCoachChatMessage = typeof coachChatMessages.$inferInsert;
+export type CoachChatAction = typeof coachChatActions.$inferSelect;
+export type NewCoachChatAction = typeof coachChatActions.$inferInsert;
 export type RunSession = typeof runSessions.$inferSelect;
 export type NewRunSession = typeof runSessions.$inferInsert;
 export type GpsPoint = typeof gpsPoints.$inferSelect;

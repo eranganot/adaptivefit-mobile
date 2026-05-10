@@ -1,27 +1,108 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Brain, Send, ArrowLeft } from "lucide-react";
+import { Brain, Send, ArrowLeft, Check, X, Undo2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { coachChatTurn } from "@/app/(app)/home/actions";
 import type { ChatMessage } from "@/app/(app)/home/actions";
+import {
+  applyChatAction,
+  declineChatAction,
+  revertChatAction,
+  type ChatActionView,
+} from "@/app/(app)/coach/actions";
 
 interface ChatThreadProps {
   workoutLogId: string;
   initialMessages: ChatMessage[];
+  initialActions: ChatActionView[];
 }
 
-export function ChatThread({ workoutLogId, initialMessages }: ChatThreadProps) {
+export function ChatThread({ workoutLogId, initialMessages, initialActions }: ChatThreadProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [actions, setActions] = useState<ChatActionView[]>(initialActions);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [, startActionTransition] = useTransition();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // When the server-component parent re-fetches (e.g. after router.refresh()),
+  // sync the actions list so newly-emitted proposals appear without a remount.
+  useEffect(() => {
+    setActions(initialActions);
+  }, [initialActions]);
+
+  // ── Proposal action handlers ──────────────────────────────────────────
+  // Each updates the local actions state optimistically, then calls the
+  // server. On error we roll back to 'pending'. router.refresh() after a
+  // successful server change reloads the page-level data (Home / Roadmap
+  // pulled fresh state). We also re-fetch via router so the next chat turn
+  // sees the new plan in its context.
+
+  const setActionStatus = (id: string, status: ChatActionView["status"]) => {
+    setActions((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
+  };
+
+  const handleApprove = (id: string) => {
+    const original = actions.find((a) => a.id === id)?.status ?? "pending";
+    setActionStatus(id, "approved");
+    startActionTransition(async () => {
+      const res = await applyChatAction(id);
+      if (!res.success) {
+        console.error("applyChatAction failed:", res.error);
+        setActionStatus(id, original);
+      } else {
+        router.refresh();
+      }
+    });
+  };
+
+  const handleDecline = (id: string) => {
+    const original = actions.find((a) => a.id === id)?.status ?? "pending";
+    setActionStatus(id, "declined");
+    startActionTransition(async () => {
+      const res = await declineChatAction(id);
+      if (!res.success) {
+        console.error("declineChatAction failed:", res.error);
+        setActionStatus(id, original);
+      }
+    });
+  };
+
+  const handleRevert = (id: string) => {
+    const original = actions.find((a) => a.id === id)?.status ?? "approved";
+    setActionStatus(id, "reverted");
+    startActionTransition(async () => {
+      const res = await revertChatAction(id);
+      if (!res.success) {
+        console.error("revertChatAction failed:", res.error);
+        setActionStatus(id, original);
+      } else {
+        router.refresh();
+      }
+    });
+  };
+
+  // Human-readable summary of what the coach is proposing, for the card body.
+  const formatProposal = (a: ChatActionView): string => {
+    const p = a.params;
+    switch (a.actionType) {
+      case "soften_session":
+        return `Ease an upcoming session by ${Number(p.reductionPct ?? 25)}%`;
+      case "swap_to_rest":
+        return "Replace an upcoming session with a rest day";
+      case "freeze_week":
+        return `Activate a coach freeze for ${Number(p.days ?? 7)} day${Number(p.days ?? 7) === 1 ? "" : "s"}`;
+      case "record_symptom":
+        return `Record symptom "${String(p.symptom ?? "")}" at severity ${Number(p.severity ?? 0)}`;
+    }
+  };
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,6 +151,9 @@ export function ChatThread({ workoutLogId, initialMessages }: ChatThreadProps) {
         createdAt: new Date(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
+      // Pull fresh server state so any proposals emitted by the coach show up
+      // as Approve/Decline cards (and the optimistic message gets the real id).
+      router.refresh();
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -108,23 +192,37 @@ export function ChatThread({ workoutLogId, initialMessages }: ChatThreadProps) {
             </p>
           </div>
         )}
-        {messages.map((msg, idx) => (
-          <div
-            key={msg.id ?? idx}
-            className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}
-          >
-            <div
-              className={cn(
-                "rounded-2xl px-4 py-2.5 max-w-[80%] text-sm leading-relaxed",
-                msg.role === "user"
-                  ? "bg-indigo-600 text-white"
-                  : "bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 shadow-sm",
-              )}
-            >
-              {msg.content}
+        {messages.map((msg, idx) => {
+          const msgActions = msg.role === "assistant"
+            ? actions.filter((a) => a.chatMessageId === msg.id)
+            : [];
+          return (
+            <div key={msg.id ?? idx} className="space-y-2">
+              <div className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
+                <div
+                  className={cn(
+                    "rounded-2xl px-4 py-2.5 max-w-[80%] text-sm leading-relaxed",
+                    msg.role === "user"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 shadow-sm",
+                  )}
+                >
+                  {msg.content}
+                </div>
+              </div>
+              {msgActions.map((a) => (
+                <ProposalCard
+                  key={a.id}
+                  action={a}
+                  summary={formatProposal(a)}
+                  onApprove={() => handleApprove(a.id)}
+                  onDecline={() => handleDecline(a.id)}
+                  onRevert={() => handleRevert(a.id)}
+                />
+              ))}
             </div>
-          </div>
-        ))}
+          );
+        })}
         {isSending && (
           <div className="flex justify-start">
             <div className="rounded-2xl px-4 py-2.5 bg-white dark:bg-slate-800 shadow-sm">
@@ -167,6 +265,101 @@ export function ChatThread({ workoutLogId, initialMessages }: ChatThreadProps) {
             <Send className="h-4 w-4" />
           </button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Proposal card ─────────────────────────────────────────────────
+// Rendered inline below the assistant message that emitted the function call.
+// Pending → Approve / Decline. Approved → ✓ Applied · Undo. Declined → ✗.
+// Reverted → ↶.
+
+interface ProposalCardProps {
+  action: ChatActionView;
+  summary: string;
+  onApprove: () => void;
+  onDecline: () => void;
+  onRevert: () => void;
+}
+
+function ProposalCard({ action, summary, onApprove, onDecline, onRevert }: ProposalCardProps) {
+  const accentByStatus: Record<ChatActionView["status"], string> = {
+    pending: "border-indigo-200 dark:border-indigo-800/60",
+    approved: "border-emerald-200 dark:border-emerald-800/60",
+    declined: "border-slate-200 dark:border-slate-700 opacity-60",
+    reverted: "border-slate-200 dark:border-slate-700 opacity-60",
+  };
+
+  return (
+    <div
+      className={cn(
+        "ml-2 rounded-2xl border bg-white dark:bg-slate-900 p-3 shadow-sm max-w-[88%]",
+        accentByStatus[action.status],
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100 dark:bg-indigo-900/40">
+          <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-300" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+            Coach proposes
+          </p>
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
+            {summary}
+          </p>
+          {action.reason && (
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+              {action.reason}
+            </p>
+          )}
+
+          {action.status === "pending" && (
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={onApprove}
+                className="flex items-center gap-1 rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
+              >
+                <Check className="h-3.5 w-3.5" /> Approve
+              </button>
+              <button
+                onClick={onDecline}
+                className="flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                <X className="h-3.5 w-3.5" /> Decline
+              </button>
+            </div>
+          )}
+
+          {action.status === "approved" && (
+            <div className="mt-3 flex items-center gap-2">
+              <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                <Check className="h-3.5 w-3.5" /> Applied
+              </span>
+              <button
+                onClick={onRevert}
+                className="flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                <Undo2 className="h-3.5 w-3.5" /> Undo
+              </button>
+            </div>
+          )}
+
+          {action.status === "declined" && (
+            <p className="mt-3 text-xs font-medium text-slate-500 dark:text-slate-400">
+              <X className="inline h-3.5 w-3.5 mr-1" />
+              Declined
+            </p>
+          )}
+
+          {action.status === "reverted" && (
+            <p className="mt-3 text-xs font-medium text-slate-500 dark:text-slate-400">
+              <Undo2 className="inline h-3.5 w-3.5 mr-1" />
+              Reverted
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -6,12 +6,14 @@ import {
   workoutLogs,
   workoutPhotos,
   coachChatMessages,
+  coachChatActions,
   runSessions,
   users,
   userLevelState,
   feedbackSentiment,
   goals,
 } from "@/lib/db/schema";
+import { COACH_CHAT_TOOLS, functionNameToActionType } from "@/lib/coach/chatTools";
 import { eq, desc, and, inArray, sql } from "drizzle-orm";
 import type { GoalCategory } from "@/lib/coach";
 import { extractFeedback } from "@/lib/gemini/extractFeedback";
@@ -296,6 +298,25 @@ export async function coachChatTurn(
         `- Freeze active: ${stateRow.freezeActive ? `YES (${stateRow.freezeReason ?? "unspecified"})` : "no"}\n` +
         (stateRow.manualOverride ? `- Manual level override active until ${stateRow.manualOverrideUntil?.toISOString().slice(0, 10)}\n` : "");
     }
+
+    // Upcoming pending sessions — needed so the model can pass real sessionId
+    // UUIDs to proposeSoftenSession / proposeSwapToRest tool calls.
+    const upcomingRows = await db.execute(sql`
+      SELECT id, week_index, day_index, session_plan->>'title' AS title
+      FROM training_roadmap
+      WHERE user_id = ${userId} AND status = 'pending'
+      ORDER BY week_index, day_index
+      LIMIT 6
+    `);
+    const upcomingList = (upcomingRows.rows as Array<{ id: string; week_index: number; day_index: number; title: string | null }>);
+    if (upcomingList.length > 0) {
+      stateContext +=
+        `\n## Upcoming planned sessions (use these UUIDs in tool calls)\n` +
+        upcomingList
+          .map((r) => `- id=${r.id} · week ${r.week_index} day ${r.day_index} · ${r.title ?? "(untitled)"}`)
+          .join("\n") +
+        "\n";
+    }
   } catch (err) {
     console.error("coachChatTurn persist/context db error:", err);
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
@@ -310,6 +331,7 @@ export async function coachChatTurn(
   // Flash works cleanly with the existing SDK and at 4096 tokens with the
   // strong system prompt below it produces solid coaching prose.
   let reply: string;
+  const functionCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const modelName = MODELS.FAST; // gemini-2.5-flash
   try {
     const athleteName = displayName?.trim() || "Eran";
@@ -341,12 +363,22 @@ export async function coachChatTurn(
       `A: "Five to seven minutes — easy walk into a slow jog, plus calf raises."\n` +
       `\n` +
       `Q: "Should I push harder on Friday's run, given how good last Tuesday felt?"\n` +
-      `A: "Hold the line. Your foot pain trended 2→4→5 over the last three runs — that's edging toward our freeze threshold. Stick with the planned 5×600m at current effort, and if pain stays under 3 this week, we add a rep next Tuesday."\n`;
+      `A: "Hold the line. Your foot pain trended 2→4→5 over the last three runs — that's edging toward our freeze threshold. Stick with the planned 5×600m at current effort, and if pain stays under 3 this week, we add a rep next Tuesday."\n\n` +
+      `## Plan-change proposals (function calls)\n` +
+      `You have access to four tools to PROPOSE plan changes: proposeSoftenSession, proposeSwapToRest, proposeFreezeWeek, proposeRecordSymptom. ` +
+      `Use them when your reasoning warrants a concrete change to the athlete's plan or recorded symptoms — do not be shy about proposing.\n` +
+      `\n` +
+      `Critical rules for tool use:\n` +
+      `- These are PROPOSALS. The user sees an Approve/Decline card and must explicitly tap Approve before anything is applied. Do NOT claim in your text reply that you have already changed anything.\n` +
+      `- In your text reply, describe what you'd like to do and why, in plain language, then emit the function call. Example: "I'd ease Friday's run from 5×600m to 4×600m — your heel pain is trending up. Approve and I'll update your roadmap." Then call proposeSoftenSession(...).\n` +
+      `- Use the actual sessionId UUID from the upcoming-sessions context when proposing soften/swap. If you don't know the session id, ask the athlete which session you mean instead of guessing.\n` +
+      `- If the athlete's question doesn't warrant a plan change, do NOT call any tool. A plain-text reply is the default.\n`;
 
     const model = gemini().getGenerativeModel({
       model: modelName,
       systemInstruction,
       generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
+      tools: COACH_CHAT_TOOLS,
     });
 
     // Build the contextual preamble — sent as the first user turn alongside
@@ -368,24 +400,64 @@ export async function coachChatTurn(
       : message;
 
     const res = await chat.sendMessage(fullPrompt);
+
+    // Extract function calls (proposals) from the response, alongside the text.
+    const candidate = res.response.candidates?.[0];
+    const parts = candidate?.content?.parts ?? [];
+    for (const p of parts) {
+      // Type guard: function-call parts have a `functionCall` field
+      const fc = (p as { functionCall?: { name: string; args: Record<string, unknown> } }).functionCall;
+      if (fc) functionCalls.push(fc);
+    }
+
     reply = res.response.text().trim();
-    if (!reply) {
+    if (!reply && functionCalls.length === 0) {
       return { error: "Coach returned empty reply", code: "gemini" };
+    }
+    // If the coach only emitted a function call without text, synthesize a
+    // brief stand-in so the user sees something readable above the proposal card.
+    if (!reply && functionCalls.length > 0) {
+      reply = "I'd like to propose a plan change — see the card below.";
     }
   } catch (err) {
     console.error("coachChatTurn gemini error:", err);
     return { error: err instanceof Error ? err.message : "Gemini error", code: "gemini" };
   }
 
-  // 5. Persist assistant reply with the model name stamped (non-fatal)
+  // 5. Persist assistant reply (model stamp) + any proposed actions linked to it.
   try {
-    await db.insert(coachChatMessages).values({
-      userId,
-      workoutLogId,
-      role: "assistant",
-      content: reply,
-      modelUsed: modelName,
-    });
+    const [savedAssistant] = await db
+      .insert(coachChatMessages)
+      .values({
+        userId,
+        workoutLogId,
+        role: "assistant",
+        content: reply,
+        modelUsed: modelName,
+      })
+      .returning({ id: coachChatMessages.id });
+
+    if (savedAssistant && functionCalls.length > 0) {
+      const rows = functionCalls
+        .map((fc) => {
+          const actionType = functionNameToActionType(fc.name);
+          if (!actionType) return null;
+          // Strip 'reason' out of args — store separately. Whatever remains is params.
+          const { reason, ...rest } = fc.args as { reason?: unknown } & Record<string, unknown>;
+          return {
+            chatMessageId: savedAssistant.id,
+            userId,
+            actionType,
+            params: rest,
+            reason: typeof reason === "string" && reason.trim() ? reason.trim() : "(no reason given)",
+            status: "pending" as const,
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+      if (rows.length > 0) {
+        await db.insert(coachChatActions).values(rows);
+      }
+    }
   } catch (err) {
     console.error("coachChatTurn persist-reply db error (non-fatal):", err);
   }
