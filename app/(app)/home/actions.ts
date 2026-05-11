@@ -173,6 +173,11 @@ export async function coachChatTurn(
   message: string,
   workoutLogId: string,
 ): Promise<CoachChatResult> {
+  // "general" sentinel → null workoutLogId in the DB. The chat works without
+  // a specific workout context (no per-workout details in the prompt).
+  const isGeneral = workoutLogId === "general";
+  const dbWorkoutLogId: string | null = isGeneral ? null : workoutLogId;
+
   // 1. Auth + user lookup
   let userId: string;
   let displayName: string | null = null;
@@ -192,7 +197,12 @@ export async function coachChatTurn(
   // 2. Hard-cap check (rare safety net, not a typical-conversation limit)
   try {
     const existing = await db.select().from(coachChatMessages).where(
-      and(eq(coachChatMessages.userId, userId), eq(coachChatMessages.workoutLogId, workoutLogId)),
+      and(
+        eq(coachChatMessages.userId, userId),
+        dbWorkoutLogId === null
+          ? sql`${coachChatMessages.workoutLogId} IS NULL`
+          : eq(coachChatMessages.workoutLogId, dbWorkoutLogId),
+      ),
     );
     if (existing.length >= CHAT_HARD_CAP_MESSAGES) {
       return {
@@ -212,7 +222,7 @@ export async function coachChatTurn(
   let goalContext = "";
   let stateContext = "";
   try {
-    await db.insert(coachChatMessages).values({ userId, workoutLogId, role: "user", content: message });
+    await db.insert(coachChatMessages).values({ userId, workoutLogId: dbWorkoutLogId, role: "user", content: message });
 
     // Load last N (CHAT_CONTEXT_WINDOW), reverse to oldest-first.
     // The user's just-inserted message is the last entry; we'll strip it before
@@ -221,7 +231,12 @@ export async function coachChatTurn(
     const recent = await db
       .select()
       .from(coachChatMessages)
-      .where(and(eq(coachChatMessages.userId, userId), eq(coachChatMessages.workoutLogId, workoutLogId)))
+      .where(and(
+        eq(coachChatMessages.userId, userId),
+        dbWorkoutLogId === null
+          ? sql`${coachChatMessages.workoutLogId} IS NULL`
+          : eq(coachChatMessages.workoutLogId, dbWorkoutLogId),
+      ))
       .orderBy(desc(coachChatMessages.createdAt))
       .limit(CHAT_CONTEXT_WINDOW);
 
@@ -236,9 +251,10 @@ export async function coachChatTurn(
 
     // Pull the workout this thread is about + its sentiment, so the coach
     // can ground replies in actual data instead of generic platitudes.
-    const workout = await db.query.workoutLogs.findFirst({
-      where: eq(workoutLogs.id, workoutLogId),
-    });
+    // General threads have no specific workout — skip this lookup.
+    const workout = dbWorkoutLogId
+      ? await db.query.workoutLogs.findFirst({ where: eq(workoutLogs.id, dbWorkoutLogId) })
+      : null;
     if (workout) {
       const sentiment = await db.query.feedbackSentiment.findFirst({
         where: eq(feedbackSentiment.workoutLogId, workout.id),
@@ -300,7 +316,18 @@ export async function coachChatTurn(
     }
 
     // Upcoming pending sessions — needed so the model can pass real sessionId
-    // UUIDs to proposeSoftenSession / proposeSwapToRest tool calls.
+    // UUIDs to proposeSoftenSession / proposeSwapToRest tool calls. We also
+    // include the calendar date computed in Asia/Jerusalem so the model can
+    // reason about "today", "tomorrow" without hallucinating.
+    const tz = "Asia/Jerusalem";
+
+    // Today's calendar date in TZ — used to derive each session's actual date.
+    const nowInTz = new Date(new Date().toLocaleString("en-US", { timeZone: tz }));
+    const todayJsDow = nowInTz.getDay(); // 0=Sun..6=Sat
+    const startOfWeekTz = new Date(nowInTz);
+    startOfWeekTz.setDate(nowInTz.getDate() - (todayJsDow === 0 ? 6 : todayJsDow - 1));
+    startOfWeekTz.setHours(0, 0, 0, 0);
+
     const upcomingRows = await db.execute(sql`
       SELECT id, week_index, day_index, session_plan->>'title' AS title
       FROM training_roadmap
@@ -313,10 +340,39 @@ export async function coachChatTurn(
       stateContext +=
         `\n## Upcoming planned sessions (use these UUIDs in tool calls)\n` +
         upcomingList
-          .map((r) => `- id=${r.id} · week ${r.week_index} day ${r.day_index} · ${r.title ?? "(untitled)"}`)
+          .map((r) => {
+            // Derive calendar date from week_index/day_index relative to this Monday.
+            const d = new Date(startOfWeekTz);
+            d.setDate(startOfWeekTz.getDate() + r.week_index * 7 + r.day_index);
+            const dateStr = d.toISOString().slice(0, 10);
+            const dayName = d.toLocaleDateString("en-US", { weekday: "long", timeZone: tz });
+            return `- id=${r.id} · date=${dateStr} (${dayName}) · ${r.title ?? "(untitled)"}`;
+          })
           .join("\n") +
         "\n";
     }
+
+    // CRITICAL: pass current date/time so the model doesn't hallucinate dates.
+    // Server-side, so this is authoritative — overrides any wrong assumptions
+    // the model might make from training data.
+    const nowFormatted = new Date().toLocaleString("en-GB", {
+      timeZone: tz,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const todayIso = new Date()
+      .toLocaleString("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" })
+      .slice(0, 10);
+    stateContext =
+      `## Current date and time (Asia/Jerusalem)\n` +
+      `- Now: ${nowFormatted}\n` +
+      `- Today's date (ISO): ${todayIso}\n` +
+      `- Use these values when reasoning about "today", "tomorrow", etc. Do NOT guess the date from training data.\n\n` +
+      stateContext;
   } catch (err) {
     console.error("coachChatTurn persist/context db error:", err);
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
@@ -465,7 +521,7 @@ export async function coachChatTurn(
       .insert(coachChatMessages)
       .values({
         userId,
-        workoutLogId,
+        workoutLogId: dbWorkoutLogId,
         role: "assistant",
         content: reply,
         modelUsed: modelName,
@@ -519,13 +575,16 @@ export async function getChatHistory(
     const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
     if (!user) return [];
 
+    const isGeneral = workoutLogId === "general";
     const rows = await db
       .select()
       .from(coachChatMessages)
       .where(
         and(
           eq(coachChatMessages.userId, user.id),
-          eq(coachChatMessages.workoutLogId, workoutLogId),
+          isGeneral
+            ? sql`${coachChatMessages.workoutLogId} IS NULL`
+            : eq(coachChatMessages.workoutLogId, workoutLogId),
         ),
       )
       .orderBy(coachChatMessages.createdAt)

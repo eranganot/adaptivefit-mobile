@@ -10,7 +10,10 @@ interface PageProps {
 export default async function CoachThreadPage({ params }: PageProps) {
   const { workoutLogId } = await params;
 
-  if (!workoutLogId || workoutLogId.length < 10) notFound();
+  // Accept either a UUID (workout-scoped thread) OR the "general" sentinel
+  // (a no-workout chat thread, persisted with workoutLogId=NULL in the DB).
+  if (!workoutLogId) notFound();
+  if (workoutLogId !== "general" && workoutLogId.length < 10) notFound();
 
   const [messages, actions] = await Promise.all([
     getChatHistory(workoutLogId, 40),

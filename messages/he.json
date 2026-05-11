@@ -93,15 +93,19 @@
     "weeklyDistance": "מרחק שבועי",
     "avgRpe": "מאמץ ממוצע",
     "trendIdeal": "אידיאלי",
-    "range.4w": "4 שבועות",
-    "range.12w": "12 שבועות",
-    "range.all": "הכל",
-    "chart.volumeIntensity": "נפח × עצימות",
-    "chart.rtlRecovery": "עומס אימון × התאוששות",
-    "chart.coachLevel": "רמת המאמן",
-    "chart.goalPacing": "התקדמות מטרה",
-    "chart.rpePace": "מאמץ מול קצב (7 ימים)",
-    "chart.weeklyVol": "מרחק שבועי (4 שבועות)",
+    "range": {
+      "4w": "4 שבועות",
+      "12w": "12 שבועות",
+      "all": "הכל"
+    },
+    "chart": {
+      "volumeIntensity": "נפח × עצימות",
+      "rtlRecovery": "עומס אימון × התאוששות",
+      "coachLevel": "רמת המאמן",
+      "goalPacing": "התקדמות מטרה",
+      "rpePace": "מאמץ מול קצב (7 ימים)",
+      "weeklyVol": "מרחק שבועי (4 שבועות)"
+    },
     "noRuns": "עדיין אין ריצות",
     "noSessions": "עדיין אין אימונים"
   },

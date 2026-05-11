@@ -93,15 +93,19 @@
     "weeklyDistance": "Weekly Distance",
     "avgRpe": "Avg RPE",
     "trendIdeal": "Ideal",
-    "range.4w": "4w",
-    "range.12w": "12w",
-    "range.all": "All",
-    "chart.volumeIntensity": "Volume x Intensity",
-    "chart.rtlRecovery": "Training Load x Recovery",
-    "chart.coachLevel": "Coach Level",
-    "chart.goalPacing": "Goal Pacing",
-    "chart.rpePace": "RPE vs Pace (7 days)",
-    "chart.weeklyVol": "Weekly Distance (4 weeks)",
+    "range": {
+      "4w": "4w",
+      "12w": "12w",
+      "all": "All"
+    },
+    "chart": {
+      "volumeIntensity": "Volume x Intensity",
+      "rtlRecovery": "Training Load x Recovery",
+      "coachLevel": "Coach Level",
+      "goalPacing": "Goal Pacing",
+      "rpePace": "RPE vs Pace (7 days)",
+      "weeklyVol": "Weekly Distance (4 weeks)"
+    },
     "noRuns": "No runs yet",
     "noSessions": "No sessions yet"
   },
