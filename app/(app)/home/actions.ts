@@ -364,15 +364,24 @@ export async function coachChatTurn(
       `\n` +
       `Q: "Should I push harder on Friday's run, given how good last Tuesday felt?"\n` +
       `A: "Hold the line. Your foot pain trended 2→4→5 over the last three runs — that's edging toward our freeze threshold. Stick with the planned 5×600m at current effort, and if pain stays under 3 this week, we add a rep next Tuesday."\n\n` +
-      `## Plan-change proposals (function calls)\n` +
-      `You have access to four tools to PROPOSE plan changes: proposeSoftenSession, proposeSwapToRest, proposeFreezeWeek, proposeRecordSymptom. ` +
-      `Use them when your reasoning warrants a concrete change to the athlete's plan or recorded symptoms — do not be shy about proposing.\n` +
+      `## Plan-change tools — HARD RULE\n` +
+      `You have 5 tools for proposing plan changes:\n` +
+      `  • proposeSoftenSession — ease an existing future session (reduce volume/intensity).\n` +
+      `  • proposeSwapToRest — replace an existing session with rest/mobility.\n` +
+      `  • proposeAddSession — add a NEW session on a future date (use this when the athlete asks to schedule something extra or move a workout to another day — propose ADD on the new date and proposeSwapToRest on the old).\n` +
+      `  • proposeFreezeWeek — halt progression for N days due to a flare-up.\n` +
+      `  • proposeRecordSymptom — log a symptom that wasn't captured at workout time.\n` +
       `\n` +
-      `Critical rules for tool use:\n` +
-      `- These are PROPOSALS. The user sees an Approve/Decline card and must explicitly tap Approve before anything is applied. Do NOT claim in your text reply that you have already changed anything.\n` +
-      `- In your text reply, describe what you'd like to do and why, in plain language, then emit the function call. Example: "I'd ease Friday's run from 5×600m to 4×600m — your heel pain is trending up. Approve and I'll update your roadmap." Then call proposeSoftenSession(...).\n` +
-      `- Use the actual sessionId UUID from the upcoming-sessions context when proposing soften/swap. If you don't know the session id, ask the athlete which session you mean instead of guessing.\n` +
-      `- If the athlete's question doesn't warrant a plan change, do NOT call any tool. A plain-text reply is the default.\n`;
+      `CRITICAL RULES — read carefully:\n` +
+      `1. If your text reply describes a change to the plan (any phrasing like "I propose to...", "let's swap...", "I'd ease...", "add a session..."), you MUST also CALL the corresponding tool. The user only sees an Approve/Decline card if you ACTUALLY CALL the tool. Saying "I propose..." in text alone is invisible to them — they see no card and your suggestion goes nowhere.\n` +
+      `2. ALWAYS pair text + tool call. The text explains WHY in plain language; the tool call makes it actionable.\n` +
+      `3. Use the EXACT sessionId UUIDs from the "Upcoming planned sessions" context when soften/swap/etc. If no upcoming session matches the athlete's request, propose a NEW one via proposeAddSession instead of guessing an id.\n` +
+      `4. For "move today to tomorrow" or similar reschedules: emit TWO tool calls — proposeSwapToRest for today's session AND proposeAddSession for the new date.\n` +
+      `5. If the athlete's message is genuinely a non-action question (e.g., "how long should I warm up?"), reply text-only with no tool call. The default is text-only; tools are only when a real plan change is being proposed.\n` +
+      `\n` +
+      `Examples:\n` +
+      `❌ WRONG: text "I propose to swap today's Easy Run to a rest day." (no tool call) → user sees no card.\n` +
+      `✅ RIGHT: text "Eran, since today's session didn't happen, I'll propose swapping it to rest and adding a 5km easy run on Monday." + proposeSwapToRest({sessionId: "<today's id>", reason: "missed today"}) + proposeAddSession({targetDate: "2026-05-11", title: "Easy run — 5 km @ 7:15/km", distanceKm: 5, paceSecPerKm: 435, reason: "make up for missed Sunday"}).\n`;
 
     const model = gemini().getGenerativeModel({
       model: modelName,
@@ -401,23 +410,49 @@ export async function coachChatTurn(
 
     const res = await chat.sendMessage(fullPrompt);
 
-    // Extract function calls (proposals) from the response, alongside the text.
-    const candidate = res.response.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
-    for (const p of parts) {
-      // Type guard: function-call parts have a `functionCall` field
-      const fc = (p as { functionCall?: { name: string; args: Record<string, unknown> } }).functionCall;
-      if (fc) functionCalls.push(fc);
-    }
+    // Parse the response in its own try/catch so a parsing exception doesn't
+    // masquerade as a Gemini API failure. Structured logging gives us a real
+    // post-mortem if the shape ever shifts.
+    try {
+      // Prefer the SDK's canonical helper. It returns an array of function
+      // calls or undefined; fall back to manual parts iteration if absent
+      // (some SDK builds expose only the raw shape).
+      type FunctionCallRaw = { name: string; args: Record<string, unknown> };
+      const helperFnCalls = (res.response as unknown as { functionCalls?: () => FunctionCallRaw[] | undefined }).functionCalls?.();
+      if (Array.isArray(helperFnCalls) && helperFnCalls.length > 0) {
+        for (const fc of helperFnCalls) functionCalls.push(fc);
+      } else {
+        const candidate = res.response.candidates?.[0];
+        const parts = candidate?.content?.parts ?? [];
+        for (const p of parts) {
+          const fc = (p as { functionCall?: FunctionCallRaw }).functionCall;
+          if (fc) functionCalls.push(fc);
+        }
+      }
 
-    reply = res.response.text().trim();
-    if (!reply && functionCalls.length === 0) {
-      return { error: "Coach returned empty reply", code: "gemini" };
-    }
-    // If the coach only emitted a function call without text, synthesize a
-    // brief stand-in so the user sees something readable above the proposal card.
-    if (!reply && functionCalls.length > 0) {
-      reply = "I'd like to propose a plan change — see the card below.";
+      reply = res.response.text().trim();
+
+      // Structured log so Railway tells us exactly what came back if anything
+      // looks off in production.
+      console.info("coachChatTurn response:", JSON.stringify({
+        model: modelName,
+        replyLength: reply.length,
+        functionCallCount: functionCalls.length,
+        functionNames: functionCalls.map((f) => f.name),
+        finishReason: res.response.candidates?.[0]?.finishReason ?? null,
+      }));
+
+      if (!reply && functionCalls.length === 0) {
+        return { error: "Coach returned empty reply", code: "gemini" };
+      }
+      // If the coach only emitted a function call without text, synthesize a
+      // brief stand-in so the user sees something readable above the proposal card.
+      if (!reply && functionCalls.length > 0) {
+        reply = "I'd like to propose a plan change — see the card below.";
+      }
+    } catch (parseErr) {
+      console.error("coachChatTurn response-parse error:", parseErr);
+      return { error: "Could not parse coach reply", code: "gemini" };
     }
   } catch (err) {
     console.error("coachChatTurn gemini error:", err);

@@ -299,7 +299,7 @@ export const coachChatActions = pgTable(
       .references(() => coachChatMessages.id, { onDelete: "cascade" }),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     actionType: text("action_type", {
-      enum: ["soften_session", "swap_to_rest", "freeze_week", "record_symptom"],
+      enum: ["soften_session", "swap_to_rest", "freeze_week", "record_symptom", "add_session"],
     }).notNull(),
     params: jsonb("params").notNull(), // shape varies per action_type
     reason: text("reason").notNull(),

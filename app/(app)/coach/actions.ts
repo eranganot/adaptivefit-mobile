@@ -179,6 +179,57 @@ export async function applyChatAction(actionId: string): Promise<Result> {
           })
           .where(eq(userLevelState.userId, userId));
       }
+    } else if (row.actionType === "add_session") {
+      // Compute weekIndex / dayIndex relative to this Monday.
+      const targetDate = String(params.targetDate ?? "");
+      const title = String(params.title ?? "Custom session");
+      const distanceKm = Number(params.distanceKm ?? 5);
+      const paceSecPerKm = Number(params.paceSecPerKm ?? 435);
+      if (!targetDate) return { success: false, error: "Missing targetDate" };
+
+      const today = new Date();
+      const dow = today.getDay();
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const targetDateObj = new Date(targetDate);
+      targetDateObj.setHours(0, 0, 0, 0);
+      const todayMidnight = new Date(today);
+      todayMidnight.setHours(0, 0, 0, 0);
+      if (targetDateObj < todayMidnight) {
+        return { success: false, error: "Cannot schedule in the past." };
+      }
+
+      const daysDiff = Math.round(
+        (targetDateObj.getTime() - startOfWeek.getTime()) / (1000 * 60 * 60 * 24),
+      );
+      const weekIndex = Math.floor(daysDiff / 7);
+      const dayIndex = daysDiff % 7;
+
+      const plan: SessionPlan = {
+        title,
+        rationale: row.reason,
+        blocks: [
+          { kind: "run_block", distanceKm, paceSecPerKm, reps: 1, recoverySec: 0 },
+        ],
+      };
+
+      const [created] = await db
+        .insert(trainingRoadmap)
+        .values({
+          userId,
+          goalId: null,
+          weekIndex,
+          dayIndex,
+          sessionPlan: plan,
+          status: "pending" as const,
+          source: "coach_proposal" as const,
+        })
+        .returning({ id: trainingRoadmap.id });
+
+      // Reversal payload = the row we just created. Revert deletes it.
+      reversal = { createdSessionId: created.id };
     } else if (row.actionType === "record_symptom") {
       const symptom = String(params.symptom ?? "");
       const severity = Math.min(10, Math.max(0, Number(params.severity ?? 0)));
@@ -336,6 +387,14 @@ export async function revertChatAction(actionId: string): Promise<Result> {
             .where(eq(feedbackSentiment.workoutLogId, msg.workoutLogId));
         }
       }
+    } else if (row.actionType === "add_session") {
+      // We created a new training_roadmap row; delete it on revert.
+      const createdId = reversal.createdSessionId as string | undefined;
+      if (createdId) {
+        await db
+          .delete(trainingRoadmap)
+          .where(and(eq(trainingRoadmap.id, createdId), eq(trainingRoadmap.userId, userId)));
+      }
     }
 
     await db
@@ -365,7 +424,7 @@ export async function revertChatAction(actionId: string): Promise<Result> {
 export type ChatActionView = {
   id: string;
   chatMessageId: string;
-  actionType: "soften_session" | "swap_to_rest" | "freeze_week" | "record_symptom";
+  actionType: "soften_session" | "swap_to_rest" | "freeze_week" | "record_symptom" | "add_session";
   params: Record<string, unknown>;
   reason: string;
   status: "pending" | "approved" | "declined" | "reverted";

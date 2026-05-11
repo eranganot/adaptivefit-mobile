@@ -29,14 +29,15 @@ export const SYMPTOM_VOCAB = [
 export type SymptomTag = (typeof SYMPTOM_VOCAB)[number];
 
 /** Action types persisted in coach_chat_actions.action_type. */
-export type ActionType = "soften_session" | "swap_to_rest" | "freeze_week" | "record_symptom";
+export type ActionType = "soften_session" | "swap_to_rest" | "freeze_week" | "record_symptom" | "add_session";
 
 /** Parameter shapes per action type. The server validates these before persisting. */
 export type ActionParams =
   | { type: "soften_session"; sessionId: string; reductionPct?: number }
   | { type: "swap_to_rest"; sessionId: string }
   | { type: "freeze_week"; days: number }
-  | { type: "record_symptom"; symptom: SymptomTag; severity: number };
+  | { type: "record_symptom"; symptom: SymptomTag; severity: number }
+  | { type: "add_session"; targetDate: string; title: string; distanceKm: number; paceSecPerKm: number };
 
 /**
  * Gemini Tool declarations. Pass these as `tools: COACH_CHAT_TOOLS` when
@@ -142,6 +143,41 @@ export const COACH_CHAT_TOOLS: Tool[] = [
           required: ["symptom", "severity", "reason"],
         },
       },
+      {
+        name: "proposeAddSession",
+        description:
+          "Propose ADDING a NEW session to the roadmap on a specific future date. Use when " +
+          "the athlete asks to schedule something extra (e.g., 'add tomorrow a workout like " +
+          "today's', 'put a 5k easy run on Wednesday'). This creates a new roadmap entry — " +
+          "use proposeSwapToRest or proposeSoftenSession for changes to existing sessions. " +
+          "The user will see an Approve/Decline card; you do NOT apply this change yourself.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            targetDate: {
+              type: SchemaType.STRING,
+              description: "ISO date string YYYY-MM-DD for the new session. Must be today or later.",
+            },
+            title: {
+              type: SchemaType.STRING,
+              description: "Display title for the session (e.g., 'Easy run — 5 km @ 7:15/km').",
+            },
+            distanceKm: {
+              type: SchemaType.NUMBER,
+              description: "Distance in km for the run block.",
+            },
+            paceSecPerKm: {
+              type: SchemaType.INTEGER,
+              description: "Target pace in seconds per km (e.g., 435 for 7:15/km).",
+            },
+            reason: {
+              type: SchemaType.STRING,
+              description: "One-sentence reason why this session is being added.",
+            },
+          },
+          required: ["targetDate", "title", "distanceKm", "paceSecPerKm", "reason"],
+        },
+      },
     ],
   },
 ];
@@ -157,6 +193,7 @@ export function functionNameToActionType(name: string): ActionType | null {
     case "proposeSwapToRest": return "swap_to_rest";
     case "proposeFreezeWeek": return "freeze_week";
     case "proposeRecordSymptom": return "record_symptom";
+    case "proposeAddSession": return "add_session";
     default: return null;
   }
 }

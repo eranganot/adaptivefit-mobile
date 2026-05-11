@@ -19,6 +19,9 @@ interface ChatThreadProps {
   initialActions: ChatActionView[];
 }
 
+// Hebrew Unicode block — for detecting RTL content and mirroring layout.
+const HEBREW_RE = /[֐-׿]/;
+
 export function ChatThread({ workoutLogId, initialMessages, initialActions }: ChatThreadProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -27,6 +30,14 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
   const [isSending, setIsSending] = useState(false);
   const [, startActionTransition] = useTransition();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // RTL detection — if the most recent user message OR the current input
+  // contains Hebrew characters, mirror the chat layout (user bubbles on the
+  // left, assistant on the right; right-aligned dates).
+  const isRtl =
+    HEBREW_RE.test(input) ||
+    [...messages].reverse().find((m) => m.role === "user")?.content?.match(HEBREW_RE) != null;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -37,6 +48,15 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
   useEffect(() => {
     setActions(initialActions);
   }, [initialActions]);
+
+  // Auto-grow the textarea height with content. Capped via CSS max-height
+  // (~5 lines) so it doesn't take over the screen.
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  }, [input]);
 
   // ── Proposal action handlers ──────────────────────────────────────────
   // Each updates the local actions state optimistically, then calls the
@@ -101,6 +121,11 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
         return `Activate a coach freeze for ${Number(p.days ?? 7)} day${Number(p.days ?? 7) === 1 ? "" : "s"}`;
       case "record_symptom":
         return `Record symptom "${String(p.symptom ?? "")}" at severity ${Number(p.severity ?? 0)}`;
+      case "add_session": {
+        const title = String(p.title ?? "new session");
+        const date = String(p.targetDate ?? "a future date");
+        return `Add "${title}" on ${date}`;
+      }
     }
   };
 
@@ -165,9 +190,16 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
   };
 
   return (
-    <div className="flex flex-col h-screen max-w-md mx-auto">
+    // Fill the available height inside the parent app shell. Using min-h
+    // instead of h-screen so the chat doesn't fight the parent layout's
+    // header + bottom nav. 100dvh adapts as the mobile Chrome address bar
+    // slides in/out. Direction flips for Hebrew so bubbles mirror.
+    <div
+      dir={isRtl ? "rtl" : "ltr"}
+      className="flex flex-col max-w-md mx-auto min-h-[calc(100dvh-9rem)]"
+    >
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 pt-8 pb-4 bg-gray-50 dark:bg-slate-950 sticky top-0 z-10">
+      <div className="flex items-center gap-3 px-4 pt-2 pb-4 bg-gray-50 dark:bg-slate-950 sticky top-0 z-10">
         <button
           onClick={() => router.back()}
           className="h-9 w-9 rounded-full bg-white dark:bg-slate-800 flex items-center justify-center shadow-sm"
@@ -200,8 +232,9 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
             <div key={msg.id ?? idx} className="space-y-2">
               <div className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
                 <div
+                  dir="auto"
                   className={cn(
-                    "rounded-2xl px-4 py-2.5 max-w-[80%] text-sm leading-relaxed",
+                    "rounded-2xl px-4 py-2.5 max-w-[80%] text-sm leading-relaxed whitespace-pre-wrap break-words",
                     msg.role === "user"
                       ? "bg-indigo-600 text-white"
                       : "bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 shadow-sm",
@@ -233,18 +266,18 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <div className="px-4 pb-6 pt-3 bg-gray-50 dark:bg-slate-950 border-t border-gray-200 dark:border-slate-800">
-        <form onSubmit={handleSend} className="flex gap-2">
-          <input
-            type="text"
+      {/* Input — sticky to the bottom of the chat container, sits above the
+          parent layout's bottom nav. Textarea auto-grows up to ~5 lines so
+          long messages stay visible. dir="auto" flips alignment per content. */}
+      <div className="sticky bottom-0 px-4 pb-4 pt-3 bg-gray-50 dark:bg-slate-950 border-t border-gray-200 dark:border-slate-800">
+        <form onSubmit={handleSend} className="flex items-end gap-2">
+          <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              // Belt-and-suspenders for mobile keyboards that don't fire form
-              // submit on Enter. Without this, the soft keyboard "Enter" key
-              // can dismiss the keyboard or behave inconsistently across
-              // Android Chrome versions.
+              // Enter sends. Shift+Enter inserts a newline (desktop).
+              // Mobile keyboards usually don't have Shift, so Enter always sends.
               if (e.key === "Enter" && !e.shiftKey && !isSending && input.trim()) {
                 e.preventDefault();
                 handleSend(e as unknown as React.FormEvent);
@@ -253,14 +286,16 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
             enterKeyHint="send"
             inputMode="text"
             autoComplete="off"
+            dir="auto"
+            rows={1}
             placeholder="Ask your coach anything…"
             disabled={isSending}
-            className="flex-1 rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+            className="flex-1 resize-none rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm leading-relaxed text-slate-900 placeholder-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 max-h-32"
           />
           <button
             type="submit"
             disabled={!input.trim() || isSending}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
           >
             <Send className="h-4 w-4" />
           </button>
