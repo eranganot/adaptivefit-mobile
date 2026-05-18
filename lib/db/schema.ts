@@ -327,14 +327,27 @@ export const runSessions = pgTable("run_sessions", {
   workoutLogId: uuid("workout_log_id").unique().references(() => workoutLogs.id, {
     onDelete: "set null",
   }),
+  // Stable client-generated UUID for the run. Used to make periodic uploads
+  // and the final endRunSession call idempotent — without it a flaky network
+  // could cause duplicate run_sessions rows. Nullable for backward-compat
+  // with rows created before Phase 2.
+  clientRunId: text("client_run_id").unique(),
+  // 'in_progress' while the run is live, 'completed' when endRunSession is
+  // called. Filters in_progress rows out of stats/history queries.
+  status: text("status", { enum: ["in_progress", "completed"] })
+    .notNull()
+    .default("completed"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
-  endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
-  distanceKm: numeric("distance_km", { precision: 6, scale: 3 }).notNull(),
-  durationSec: integer("duration_sec").notNull(),
-  avgPaceSecPerKm: integer("avg_pace_sec_per_km").notNull(),
-  splits: jsonb("splits").notNull(), // [{km:1, paceSec:330}, ...]
+  // Nullable while the run is in_progress; set when the user taps End.
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  distanceKm: numeric("distance_km", { precision: 6, scale: 3 }).notNull().default("0"),
+  durationSec: integer("duration_sec").notNull().default(0),
+  avgPaceSecPerKm: integer("avg_pace_sec_per_km").notNull().default(0),
+  // Nullable while in_progress (computed on End). Defaults to empty array on completion.
+  splits: jsonb("splits").default(sql`'[]'::jsonb`),
   source: text("source", { enum: ["gps", "manual", "fit"] }).notNull().default("gps"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─────────────────────────────────────────────────────────────────

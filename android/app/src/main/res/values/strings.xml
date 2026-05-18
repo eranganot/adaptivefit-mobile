@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AdaptiveFit</string>
+    <string name="title_activity_main">AdaptiveFit</string>
+    <string name="package_name">com.adaptivefit.app</string>
+    <string name="custom_url_scheme">com.adaptivefit.app</string>
+</resources>

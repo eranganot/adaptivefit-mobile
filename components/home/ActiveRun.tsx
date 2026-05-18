@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Pause, Play, Square, MapPin } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -20,12 +20,16 @@ const MapboxLiveMap = dynamic(() => import("@/components/run/MapboxLiveMap"), {
 
 interface ActiveRunProps {
   sessionTitle: string;    // e.g. "Step 2 of 3 — Easy Pace Run"
+  /** When true, rehydrate from IndexedDB instead of starting a new run.
+   *  Used when the app is reopened mid-run. */
+  restoreFromStorage?: boolean;
   onEnd: (data: {
     startedAt: Date;
     endedAt: Date;
     points: GpsRawPoint[];
     distanceKm: number;
     durationSec: number;
+    clientRunId: string;
   }) => void;
 }
 
@@ -42,17 +46,36 @@ function formatPace(secPerKm: number | null): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export default function ActiveRun({ sessionTitle, onEnd }: ActiveRunProps) {
+export default function ActiveRun({
+  sessionTitle,
+  restoreFromStorage = false,
+  onEnd,
+}: ActiveRunProps) {
   const t = useTranslations("run");
   const tracker = useRunTracker();
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const startedRef = useRef(false);
+  const [resumedToast, setResumedToast] = useState<string | null>(null);
 
-  // ── Auto-start on mount ───────────────────────────────────────
+  // ── Auto-start (or restore) on mount ──────────────────────────
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
-    tracker.start();
+    if (restoreFromStorage) {
+      // Fire-and-forget: restore() handles its own error states via the hook.
+      tracker.restore().then((ok) => {
+        if (ok) {
+          setResumedToast(t("resumedToast"));
+          // Auto-dismiss after 4s.
+          setTimeout(() => setResumedToast(null), 4000);
+        } else {
+          // Persistence was stale or missing — start fresh.
+          tracker.start();
+        }
+      });
+    } else {
+      tracker.start();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -104,6 +127,13 @@ export default function ActiveRun({ sessionTitle, onEnd }: ActiveRunProps) {
 
   return (
     <div className="space-y-4">
+      {/* Resume toast — shown briefly when the user reopens the app mid-run */}
+      {resumedToast && (
+        <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">
+          {resumedToast}
+        </div>
+      )}
+
       {/* Phase header */}
       <div className="flex items-center justify-between">
         <div>

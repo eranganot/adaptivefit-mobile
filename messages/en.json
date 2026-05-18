@@ -187,6 +187,16 @@
     "totalDistance": "Distance",
     "totalTime": "Time",
     "splitKm": "km {n}",
-    "getFeedback": "Get Coach Feedback"
+    "getFeedback": "Get Coach Feedback",
+    "resumedToast": "Run resumed — continuing where you left off",
+    "bgExplainer": {
+      "title": "Track your run accurately",
+      "intro": "AdaptiveFit needs your location to map and measure your run — including when the screen is off or you switch apps mid-run.",
+      "permTitle": "Allow location all the time",
+      "permBody": "When Android asks, choose 'Allow all the time'. This keeps GPS active when the screen locks. We only collect location while you're actively running.",
+      "notifTitle": "You'll see a small notification",
+      "notifBody": "Android requires a persistent 'Tracking your run' notification while we record. Tap it any time to return to the live tracker. It disappears when you end the run.",
+      "acknowledge": "Got it — start my run"
+    }
   }
 }

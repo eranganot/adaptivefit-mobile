@@ -1,10 +1,15 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { SessionPlan } from "@/lib/coach";
 import type { GpsRawPoint } from "@/lib/run/haversine";
 import { logManualWorkout, coachChatTurn } from "@/app/(app)/home/actions";
 import { endRunSession } from "@/app/(app)/home/runActions";
+import { peekPersistedRun, discardPersistedRun } from "@/lib/run/tracker";
+import {
+  BackgroundLocationExplainer,
+  useBackgroundLocationExplainer,
+} from "@/components/run/BackgroundLocationExplainer";
 import PreWorkout from "./PreWorkout";
 import PostWorkout from "./PostWorkout";
 import Analyzing from "./Analyzing";
@@ -36,6 +41,7 @@ export interface RunEndData {
   distanceKm: number;
   durationSec: number;
   runSessionId?: string;
+  clientRunId?: string;
 }
 
 export interface HomeClientProps {
@@ -85,10 +91,37 @@ export default function HomeClient({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [runEndData, setRunEndData] = useState<RunEndData | null>(null);
+  // If true, ActiveRun will hydrate from IndexedDB on mount instead of starting fresh.
+  const [restoreRunFromStorage, setRestoreRunFromStorage] = useState(false);
+  // Native-only: show the background-location explainer modal before
+  // triggering the OS permission prompts on the first run.
+  const bgExplainer = useBackgroundLocationExplainer();
+  const [pendingStart, setPendingStart] = useState(false);
   // Pre-filled RPE for post-workout form when coming from GPS run (default Moderate = 5)
   const [prefillRpe, setPrefillRpe] = useState<number | undefined>(undefined);
   // Cold-start modal (Bug #8)
   const [pendingColdStart, setPendingColdStart] = useState(initialPendingColdStart);
+
+  // ── Auto-resume on mount ──────────────────────────────────────
+  // If a run is in progress in IndexedDB (because the user closed the app /
+  // killed the browser during a run), skip the pre-workout screen and jump
+  // straight back to the live tracker. The tracker hook handles rehydration.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await peekPersistedRun();
+        if (cancelled || !snap) return;
+        setRestoreRunFromStorage(true);
+        setState("active-run");
+      } catch (e) {
+        console.warn("[HomeClient] peekPersistedRun failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── Manual log flow ───────────────────────────────────────────
   const handleLogManual = useCallback(() => {
@@ -99,8 +132,22 @@ export default function HomeClient({
 
   // ── GPS run flow ──────────────────────────────────────────────
   const handleStartRun = useCallback(() => {
+    setRestoreRunFromStorage(false);
+    // On native (Capacitor) we show a one-time explainer modal before
+    // the OS permission prompts fire. On web (or returning native users),
+    // jump straight to the live tracker.
+    if (bgExplainer.needsExplanation) {
+      setPendingStart(true);
+      return;
+    }
     setState("active-run");
-  }, []);
+  }, [bgExplainer.needsExplanation]);
+
+  const handleAcknowledgeExplainer = useCallback(() => {
+    bgExplainer.dismiss();
+    setPendingStart(false);
+    setState("active-run");
+  }, [bgExplainer]);
 
   const handleRunEnd = useCallback(
     async (data: {
@@ -109,8 +156,11 @@ export default function HomeClient({
       points: GpsRawPoint[];
       distanceKm: number;
       durationSec: number;
+      clientRunId: string;
     }) => {
-      // Persist to DB (non-blocking for UI transition)
+      // Finalize on the server. endRunSession is idempotent on clientRunId
+      // (see runActions.ts) so it merges with any partial row already created
+      // by the 15s sync loop.
       let runSessionId: string | undefined;
       try {
         const result = await endRunSession(data);
@@ -118,6 +168,16 @@ export default function HomeClient({
       } catch (e) {
         console.error("endRunSession error:", e);
       }
+      // Only clear local persistence after the server has the final row, so
+      // a failed final upload still leaves a resumable run on the device.
+      if (runSessionId) {
+        try {
+          await discardPersistedRun();
+        } catch (e) {
+          console.warn("[HomeClient] discardPersistedRun failed:", e);
+        }
+      }
+      setRestoreRunFromStorage(false);
       setRunEndData({ ...data, runSessionId });
       setState("run-summary");
     },
@@ -223,6 +283,12 @@ export default function HomeClient({
         />
       )}
 
+      {/* First-run-only background-location explainer (native shell only) */}
+      <BackgroundLocationExplainer
+        open={pendingStart && bgExplainer.needsExplanation}
+        onAcknowledge={handleAcknowledgeExplainer}
+      />
+
       {state === "pre-workout" && (
         <PreWorkout
           name={name}
@@ -242,7 +308,11 @@ export default function HomeClient({
       )}
 
       {state === "active-run" && (
-        <ActiveRun sessionTitle={sessionTitle} onEnd={handleRunEnd} />
+        <ActiveRun
+          sessionTitle={sessionTitle}
+          restoreFromStorage={restoreRunFromStorage}
+          onEnd={handleRunEnd}
+        />
       )}
 
       {state === "run-summary" && runEndData && (

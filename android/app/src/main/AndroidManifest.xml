@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="false">
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- ── Location ─────────────────────────────────────────────────── -->
+    <!-- FINE: GPS-quality location (we always want this for run tracking). -->
+    <!-- COARSE: required as a fallback by the Android Location framework -->
+    <!--   even when we ask for FINE. -->
+    <!-- BACKGROUND: lets us keep tracking after the screen locks / app is -->
+    <!--   backgrounded. On Android 11+ this MUST be requested separately, -->
+    <!--   AFTER foreground location is already granted (we handle that UX -->
+    <!--   in the pre-run permission flow). -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- ── Foreground service (background-geolocation plugin) ──────────── -->
+    <!-- The plugin runs as an Android foreground service while a run is -->
+    <!-- active. Required so the OS doesn't suspend our process when the -->
+    <!-- screen locks. Comes with a persistent notification (Android -->
+    <!-- requirement — no way to hide it). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ requires declaring the *type* of foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- Android 13+ requires runtime permission to post notifications -->
+    <!-- (including the foreground-service notification). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- WAKE_LOCK keeps the CPU running so GPS callbacks fire while the -->
+    <!-- screen is off. The plugin uses this internally. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Required feature declaration — Play Store filter, also a hint to -->
+    <!-- the OS that we're a location-aware app. -->
+    <uses-feature android:name="android.hardware.location.gps" android:required="true" />
+</manifest>

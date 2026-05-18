@@ -31,3 +31,19 @@ coverage/
 
 # drizzle
 drizzle/meta/_journal.json.bak
+
+# Capacitor / Android build artifacts
+# The android/ folder itself IS committed (it's our native shell config),
+# but build outputs / IDE files / generated assets are not.
+android/.gradle/
+android/build/
+android/app/build/
+android/app/release/
+android/local.properties
+android/.idea/
+android/captures/
+android/**/*.iml
+android/.cxx/
+# Keystores must never be committed
+*.jks
+*.keystore
