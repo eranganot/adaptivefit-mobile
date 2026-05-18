@@ -159,15 +159,34 @@ async function startNativeWatcher(
   onError: (e: GeoError) => void,
   opts: GeoWatchOptions,
 ): Promise<GeoWatcher> {
-  // Dynamic import keeps the native plugin out of the web bundle. Different
-  // versions of the plugin expose the proxy as either a named export
-  // (`BackgroundGeolocation`) or as `default`. We read both and cast through
-  // a known interface so TypeScript is happy regardless of the .d.ts shape
-  // shipped by the version we end up with.
+  // Access the plugin via Capacitor's runtime-injected global proxy rather
+  // than importing the npm module. Two reasons:
+  //
+  //   1. Build: @capacitor-community/background-geolocation has no clean
+  //      web entry point that Next.js's webpack can statically analyze on
+  //      Railway. A regular `import` (even a dynamic one) fails the build
+  //      with "Module not found".
+  //
+  //   2. Runtime: Capacitor's native shell registers every installed plugin
+  //      at `window.Capacitor.Plugins.<PluginName>` regardless of how the
+  //      JS module is bundled. The npm package is still required (Android
+  //      gradle pulls the native Java/Kotlin code from it), it's just that
+  //      we don't need to import the JS to access the proxy.
+  //
+  // If the global isn't there, we're either not running inside Capacitor
+  // or the plugin failed to register — surface that as an error.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod = (await import("@capacitor-community/background-geolocation")) as any;
-  const BackgroundGeolocation: BackgroundGeolocationApi =
-    mod.BackgroundGeolocation ?? mod.default;
+  const cap = (typeof window !== "undefined" ? (window as any).Capacitor : undefined);
+  const BackgroundGeolocation: BackgroundGeolocationApi | undefined =
+    cap?.Plugins?.BackgroundGeolocation;
+  if (!BackgroundGeolocation) {
+    onError({
+      code: "not_supported",
+      message:
+        "Background geolocation plugin not available. Reinstall the app or check Capacitor sync.",
+    });
+    return { stop: async () => {} };
+  }
 
   let watcherId: string | null = null;
 
