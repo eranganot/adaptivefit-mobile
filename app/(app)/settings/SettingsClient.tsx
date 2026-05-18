@@ -19,7 +19,9 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import { setLocale, disconnectGoogleFit, syncGoogleFit, setManualLevelOverride, clearManualLevelOverride } from "./actions";
+import { setLocale, setManualLevelOverride, clearManualLevelOverride } from "./actions";
+import { syncHealthConnect, type SyncResult } from "@/lib/fit/syncFromClient";
+import { openSettings as openHealthConnectSettings } from "@/lib/fit/healthConnect";
 import { GoalForm } from "@/components/goals/GoalForm";
 import { archiveGoalById } from "@/lib/goals/actions";
 import type { SettingsGoal } from "./page";
@@ -30,11 +32,12 @@ interface SettingsClientProps {
   locale: "en" | "he";
   activeGoals: SettingsGoal[];
   weightEntries: WeightEntry[];
-  fitToken: { status: string; lastSyncAt: Date | null } | null;
+  /** Last time fit_daily_metrics was updated for this user. null = never synced. */
+  healthConnectLastSyncAt: Date | null;
   levelState: { currentLevel: number; manualOverride: boolean; manualOverrideUntil: Date | null } | null;
 }
 
-export function SettingsClient({ locale, activeGoals, weightEntries, fitToken, levelState }: SettingsClientProps) {
+export function SettingsClient({ locale, activeGoals, weightEntries, healthConnectLastSyncAt, levelState }: SettingsClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isDark, setIsDark] = useState(false);
@@ -48,7 +51,8 @@ export function SettingsClient({ locale, activeGoals, weightEntries, fitToken, l
   const [isSavingLevel, setIsSavingLevel] = useState(false);
   const [levelResult, setLevelResult] = useState<string | null>(null);
 
-  // Surface URL params from OAuth callback
+  // Legacy OAuth callback params kept only so old in-flight redirects don't 404.
+  // Health Connect has no OAuth — these are unused going forward.
   const fitConnected = searchParams.get("fit_connected");
   const fitError = searchParams.get("fit_error");
 
@@ -102,8 +106,27 @@ export function SettingsClient({ locale, activeGoals, weightEntries, fitToken, l
 
   const handleSyncNow = () => {
     startSync(async () => {
-      const result = await syncGoogleFit();
-      setSyncResult(result.success ? `Synced — ${result.daysFetched} days updated` : `Error: ${result.error}`);
+      const result: SyncResult = await syncHealthConnect({ daysBack: 30, interactive: true });
+      switch (result.kind) {
+        case "ok":
+          setSyncResult(`Synced — ${result.daysFetched} days updated`);
+          break;
+        case "unsupported":
+          setSyncResult("Health Connect is only available on Android.");
+          break;
+        case "not-installed":
+          setSyncResult("Install Health Connect from the Play Store to sync.");
+          break;
+        case "needs-update":
+          setSyncResult("Update Health Connect from the Play Store, then try again.");
+          break;
+        case "permission-denied":
+          setSyncResult("Permission denied. Grant data access in Health Connect settings.");
+          break;
+        case "error":
+          setSyncResult(`Error: ${result.message}`);
+          break;
+      }
       router.refresh();
     });
   };
@@ -116,10 +139,15 @@ export function SettingsClient({ locale, activeGoals, weightEntries, fitToken, l
     if (result.success) router.refresh();
   };
 
-  const handleDisconnect = async () => {
-    if (!confirm("Disconnect Google Fit? This will delete your stored tokens.")) return;
-    await disconnectGoogleFit();
-    router.refresh();
+  // Health Connect has no "disconnect" server-side (no OAuth tokens).
+  // To revoke data access, the user goes through Health Connect's own
+  // settings UI — we just deep-link them there.
+  const handleOpenHcSettings = async () => {
+    try {
+      await openHealthConnectSettings();
+    } catch (e) {
+      console.warn("Could not open Health Connect settings:", e);
+    }
   };
 
   // Bug #9 — manual level override handlers
@@ -422,7 +450,7 @@ export function SettingsClient({ locale, activeGoals, weightEntries, fitToken, l
           )}
         </div>
 
-        {/* Section 4: Connections */}
+        {/* Section 4: Connections — Health Connect (Phase 8 migration) */}
         <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm p-5 space-y-3">
           <div className="flex items-center gap-3 mb-4">
             <Plug className="w-5 h-5 text-purple-600" />
@@ -431,23 +459,17 @@ export function SettingsClient({ locale, activeGoals, weightEntries, fitToken, l
             </h2>
           </div>
 
-          {/* OAuth callback banners */}
+          {/* Legacy OAuth callback banners (older deploys may still redirect here) */}
           {fitConnected === "1" && (
             <div className="flex items-center gap-2 rounded-2xl bg-green-50 dark:bg-green-900/20 px-4 py-3 text-sm text-green-700 dark:text-green-400">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
-              Google Fit connected! Initial sync is running in the background.
+              You&apos;re connected. Use &apos;Sync now&apos; below to pull data via Health Connect.
             </div>
           )}
           {fitError && (
-            <div className="flex items-center gap-2 rounded-2xl bg-rose-50 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+            <div className="flex items-center gap-2 rounded-2xl bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
               <AlertCircle className="h-4 w-4 shrink-0" />
-              Connection failed: {fitError}. Please try again.
-            </div>
-          )}
-          {fitToken?.status === "error" && !fitError && (
-            <div className="flex items-center gap-2 rounded-2xl bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              Google Fit sync failed. Reconnect to restore access.
+              Old Google Fit OAuth flow returned an error (this integration has been replaced by Health Connect — try Sync now below).
             </div>
           )}
           {syncResult && (
@@ -457,60 +479,49 @@ export function SettingsClient({ locale, activeGoals, weightEntries, fitToken, l
             </div>
           )}
 
-          {/* Google Fit row */}
+          {/* Health Connect row */}
           <div className="rounded-2xl bg-gray-50 dark:bg-slate-800 p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Smartphone className="w-5 h-5 text-gray-600 dark:text-gray-400" />
                 <div>
-                  <p className="font-medium text-gray-900 dark:text-white">Google Fit</p>
-                  {fitToken && fitToken.status === "active" ? (
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {fitToken.lastSyncAt
-                        ? `Last synced ${new Date(fitToken.lastSyncAt).toLocaleDateString()}`
-                        : "Connected — syncing…"}
-                    </p>
-                  ) : fitToken?.status === "error" ? (
-                    <p className="text-xs text-rose-500">Sync error — reconnect</p>
-                  ) : (
-                    <p className="text-xs text-gray-400">Not connected</p>
-                  )}
+                  <p className="font-medium text-gray-900 dark:text-white">Health Connect</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {healthConnectLastSyncAt
+                      ? `Last synced ${new Date(healthConnectLastSyncAt).toLocaleDateString()} ${new Date(healthConnectLastSyncAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : "Not synced yet — tap Sync now"}
+                  </p>
                 </div>
               </div>
-
-              {fitToken && fitToken.status !== "revoked" ? (
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                </div>
-              ) : (
-                <button
-                  onClick={() => { window.location.href = "/api/auth/google-fit"; }}
-                  className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
-                >
-                  Connect
-                </button>
+              {healthConnectLastSyncAt && (
+                <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
               )}
             </div>
 
-            {fitToken && fitToken.status !== "revoked" && (
-              <div className="mt-3 flex gap-2">
-                <button
-                  onClick={handleSyncNow}
-                  disabled={isSyncing}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-2 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
-                  {isSyncing ? "Syncing…" : "Sync now"}
-                </button>
-                <button
-                  onClick={handleDisconnect}
-                  className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 dark:border-rose-800 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
-                >
-                  <Unplug className="h-3.5 w-3.5" />
-                  Disconnect
-                </button>
-              </div>
-            )}
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={handleSyncNow}
+                disabled={isSyncing}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-2 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                {isSyncing ? "Syncing…" : "Sync now"}
+              </button>
+              <button
+                onClick={handleOpenHcSettings}
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                title="Open Health Connect's own settings to manage which apps share data"
+              >
+                <Unplug className="h-3.5 w-3.5" />
+                Settings
+              </button>
+            </div>
+
+            <p className="mt-3 text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">
+              Health Connect runs on Android only and reads data your other fitness apps
+              (Google Fit, Samsung Health, Fitbit, etc.) write to it. To revoke access, tap
+              <span className="font-medium"> Settings</span> above or open Health Connect from your phone&apos;s app drawer.
+            </p>
           </div>
         </div>
 

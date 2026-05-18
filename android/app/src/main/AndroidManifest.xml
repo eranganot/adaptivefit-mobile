@@ -20,7 +20,30 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Health Connect: the permission rationale intent. When the user -->
+            <!-- taps "Why does AdaptiveFit need this?" in Health Connect's     -->
+            <!-- permission dialog, Android opens the activity that handles    -->
+            <!-- this action. Pointing it at MainActivity sends them back into -->
+            <!-- our app, where the Settings page explains it. Required by    -->
+            <!-- Google's Health Connect data-types policy.                    -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
         </activity>
+
+        <!-- Health Connect also needs an activity-alias variant of the -->
+        <!-- rationale intent on Android 13. Standard alias declaration. -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -66,4 +89,24 @@
     <!-- Required feature declaration — Play Store filter, also a hint to -->
     <!-- the OS that we're a location-aware app. -->
     <uses-feature android:name="android.hardware.location.gps" android:required="true" />
+
+    <!-- ── Health Connect (Phase 8) ─────────────────────────────────── -->
+    <!-- Each data type we read requires its own permission. We declare    -->
+    <!-- a minimal set for the MVP: steps, distance, calories, heart rate. -->
+    <!-- ExerciseSession comes in Phase 8b.                                -->
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+
+    <!-- Health Connect's package-visibility query (Android 11+). Without  -->
+    <!-- this, our app can't even detect whether Health Connect is        -->
+    <!-- installed because Android hides other apps' presence by default. -->
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+        <intent>
+            <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+        </intent>
+    </queries>
 </manifest>

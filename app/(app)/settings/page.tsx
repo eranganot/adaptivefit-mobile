@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, goals, oauthTokens, userLevelState, bodyMetrics } from "@/lib/db/schema";
+import { users, goals, userLevelState, bodyMetrics, fitDailyMetrics } from "@/lib/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { SettingsClient } from "./SettingsClient";
@@ -60,17 +60,19 @@ export default async function SettingsPage() {
     console.error("Error fetching active goals:", error);
   }
 
-  // Get Google Fit connection status
-  let fitToken: { status: string; lastSyncAt: Date | null } | null = null;
+  // Health Connect status (Phase 8 — replaces Google Fit OAuth tokens).
+  // Health Connect is on-device and has no cloud auth, so "last sync" is
+  // simply the most recent fitDailyMetrics.updatedAt row for this user.
+  let healthConnectLastSyncAt: Date | null = null;
   try {
-    const tokenRow = await db.query.oauthTokens.findFirst({
-      where: and(eq(oauthTokens.userId, user.id), eq(oauthTokens.provider, "google_fit")),
+    const latest = await db.query.fitDailyMetrics.findFirst({
+      where: eq(fitDailyMetrics.userId, user.id),
+      orderBy: [desc(fitDailyMetrics.updatedAt)],
+      columns: { updatedAt: true },
     });
-    if (tokenRow) {
-      fitToken = { status: tokenRow.status, lastSyncAt: tokenRow.lastSyncAt };
-    }
+    healthConnectLastSyncAt = latest?.updatedAt ?? null;
   } catch (e) {
-    console.error("Error fetching Fit token:", e);
+    console.error("Error fetching health-connect status:", e);
   }
 
   // Get coach level state (Bug #9)
@@ -115,7 +117,7 @@ export default async function SettingsPage() {
     <SettingsClient
       locale={locale}
       activeGoals={activeGoals}
-      fitToken={fitToken}
+      healthConnectLastSyncAt={healthConnectLastSyncAt}
       levelState={levelState}
       weightEntries={weightEntries}
     />

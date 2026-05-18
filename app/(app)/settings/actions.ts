@@ -2,10 +2,11 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, oauthTokens, userLevelState } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { users, userLevelState, fitDailyMetrics } from "@/lib/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
+import type { FitDailyAggregate } from "@/lib/fit/types";
 
 export async function setLocale(locale: "en" | "he") {
   try {
@@ -51,35 +52,12 @@ export async function setLocale(locale: "en" | "he") {
   }
 }
 
-export async function disconnectGoogleFit(): Promise<{ success: boolean; error?: string }> {
-  try {
-    const session = await auth();
-    if (!session?.user?.email) return { success: false, error: "Not authenticated" };
-
-    const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
-    if (!user) return { success: false, error: "User not found" };
-
-    // Attempt to revoke the token with Google (non-fatal)
-    const tokenRow = await db.query.oauthTokens.findFirst({
-      where: and(eq(oauthTokens.userId, user.id), eq(oauthTokens.provider, "google_fit")),
-    });
-    if (tokenRow) {
-      fetch(`https://oauth2.googleapis.com/revoke?token=${tokenRow.accessToken}`, {
-        method: "POST",
-      }).catch(() => {});
-    }
-
-    await db
-      .delete(oauthTokens)
-      .where(and(eq(oauthTokens.userId, user.id), eq(oauthTokens.provider, "google_fit")));
-
-    revalidatePath("/settings");
-    return { success: true };
-  } catch (e) {
-    console.error("disconnectGoogleFit error:", e);
-    return { success: false, error: "Failed to disconnect" };
-  }
-}
+// disconnectGoogleFit() was removed in Phase 8 — Google Fit REST API is
+// deprecated and we migrated to Health Connect (no cloud auth to disconnect).
+//
+// Stale oauth_tokens rows with provider='google_fit' are harmless but you can
+// purge them manually with:
+//   DELETE FROM oauth_tokens WHERE provider = 'google_fit';
 
 /**
  * Bug #9 — Manual level override.
@@ -158,31 +136,98 @@ export async function clearManualLevelOverride(): Promise<{ success: boolean; er
   }
 }
 
-export async function syncGoogleFit(): Promise<{
-  success: boolean;
-  daysFetched?: number;
-  error?: string;
-}> {
+/**
+ * Sync data pre-read from Health Connect on the client.
+ *
+ * Phase 8 migration: replaces the old Google Fit REST flow. Health Connect
+ * is on-device, so the client (native Capacitor shell on Android) reads the
+ * raw aggregates and POSTs them here. This action upserts into the existing
+ * `fit_daily_metrics` table so the rest of the app (home screen yesterday
+ * widget, analytics) keeps working unchanged.
+ *
+ * Web callers get a no-op result (Health Connect is Android-only).
+ */
+export async function syncHealthConnectData(
+  days: FitDailyAggregate[],
+): Promise<{ success: boolean; daysFetched?: number; error?: string }> {
   try {
     const session = await auth();
     if (!session?.user?.email) return { success: false, error: "Not authenticated" };
 
-    const res = await fetch(`${process.env.NEXTAUTH_URL}/api/fit/sync`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-secret": process.env.CRON_SECRET ?? "",
-        Cookie: `next-auth.session-token=${session}`, // pass session forward
-      },
-      body: JSON.stringify({}),
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, session.user.email),
     });
+    if (!user) return { success: false, error: "User not found" };
 
-    if (!res.ok) return { success: false, error: "Sync request failed" };
-    const data = await res.json() as { daysFetched?: number };
+    if (!Array.isArray(days) || days.length === 0) {
+      return { success: true, daysFetched: 0 };
+    }
+
+    let written = 0;
+    for (const d of days) {
+      // Skip rows with no useful data — keeps the table compact.
+      if (!d.steps && !d.distanceM && !d.activeMinutes && !d.avgHr && !d.calories) continue;
+
+      await db
+        .insert(fitDailyMetrics)
+        .values({
+          userId: user.id,
+          date: d.date,
+          steps: d.steps,
+          distanceM: d.distanceM,
+          activeMinutes: d.activeMinutes,
+          avgHr: d.avgHr,
+          calories: d.calories,
+        })
+        .onConflictDoUpdate({
+          target: [fitDailyMetrics.userId, fitDailyMetrics.date],
+          set: {
+            steps: d.steps,
+            distanceM: d.distanceM,
+            activeMinutes: d.activeMinutes,
+            avgHr: d.avgHr,
+            calories: d.calories,
+            updatedAt: new Date(),
+          },
+        });
+      written += 1;
+    }
+
+    revalidatePath("/home");
     revalidatePath("/settings");
-    return { success: true, daysFetched: data.daysFetched ?? 0 };
+    return { success: true, daysFetched: written };
   } catch (e) {
-    console.error("syncGoogleFit error:", e);
-    return { success: false, error: "Failed to sync" };
+    console.error("syncHealthConnectData error:", e);
+    return { success: false, error: e instanceof Error ? e.message : "Failed to sync" };
+  }
+}
+
+/**
+ * Lightweight status query: when did Health Connect data last update?
+ *
+ * We don't keep a dedicated oauth_tokens row anymore (HC has no cloud auth).
+ * Instead we derive "lastSyncAt" from the most recent fit_daily_metrics
+ * updatedAt for this user. Returns null if nothing has ever synced.
+ */
+export async function getHealthConnectStatus(): Promise<{
+  lastSyncAt: Date | null;
+}> {
+  try {
+    const session = await auth();
+    if (!session?.user?.email) return { lastSyncAt: null };
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, session.user.email),
+    });
+    if (!user) return { lastSyncAt: null };
+
+    const latest = await db.query.fitDailyMetrics.findFirst({
+      where: eq(fitDailyMetrics.userId, user.id),
+      orderBy: [desc(fitDailyMetrics.updatedAt)],
+      columns: { updatedAt: true },
+    });
+    return { lastSyncAt: latest?.updatedAt ?? null };
+  } catch (e) {
+    console.error("getHealthConnectStatus error:", e);
+    return { lastSyncAt: null };
   }
 }
