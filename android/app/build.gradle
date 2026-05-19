@@ -45,6 +45,15 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+
+    // Health Connect client (Phase 8). The @kiwi-health/capacitor-health-connect
+    // plugin doesn't always pull this in transitively, depending on its
+    // packaging. Adding it explicitly at the app level guarantees the
+    // androidx.health.connect.client.* classes are available, which is what
+    // the plugin's Kotlin class needs to instantiate at bridge startup.
+    // Without this dep present, the plugin silently fails to register and
+    // window.Capacitor.Plugins.HealthConnect is missing at runtime.
+    implementation "androidx.health.connect:connect-client:1.1.0-alpha07"
 }
 
 apply from: 'capacitor.build.gradle'

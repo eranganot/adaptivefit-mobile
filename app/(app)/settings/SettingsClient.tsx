@@ -113,16 +113,24 @@ export function SettingsClient({ locale, activeGoals, weightEntries, healthConne
           break;
         case "unsupported": {
           // If we're actually running on Android but still got "unsupported",
-          // the plugin failed to register — show a developer-y message
-          // instead of the generic "Android only" line.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const isAndroid = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
-            .Capacitor?.isNativePlatform?.();
-          setSyncResult(
-            isAndroid
-              ? "Plugin missing — check capacitor.plugins.json and rebuild the APK."
-              : "Health Connect is only available on Android.",
-          );
+          // the plugin failed to register or uses a different name than we
+          // expect. Surface the *actual* registered plugin keys so we can
+          // diagnose without needing chrome://inspect.
+          const cap = (window as unknown as {
+            Capacitor?: {
+              isNativePlatform?: () => boolean;
+              Plugins?: Record<string, unknown>;
+            };
+          }).Capacitor;
+          const isAndroid = cap?.isNativePlatform?.();
+          if (isAndroid) {
+            const keys = Object.keys(cap?.Plugins ?? {});
+            setSyncResult(
+              `Plugin missing. Registered plugins: ${keys.length ? keys.join(", ") : "(none)"}`,
+            );
+          } else {
+            setSyncResult("Health Connect is only available on Android.");
+          }
           break;
         }
         case "not-installed":
