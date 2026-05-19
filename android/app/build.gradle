@@ -19,7 +19,12 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // compileSdk 35+ rejects the legacy proguard-android.txt (it contains
+            // -dontoptimize, which disables R8 optimization passes). Use the
+            // -optimize variant instead, which is now the only AGP-approved
+            // default. minifyEnabled stays false so this only matters if you
+            // turn on R8 later for a release build.
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

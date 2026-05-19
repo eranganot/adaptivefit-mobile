@@ -1,7 +1,12 @@
 ext {
-    minSdkVersion = 24
-    compileSdkVersion = 34
-    targetSdkVersion = 34
+    // Phase 8 bump: Health Connect plugin requires minSdk 26 (Android 8.0)
+    // and compileSdk 35 (its AAR was built against API 35). minSdk 26 covers
+    // ~98% of active Android devices in 2026, no real coverage cost. The
+    // alternative (Health Connect on Android 7) doesn't exist — Google made
+    // 8.0 the floor for the Health Connect APK itself.
+    minSdkVersion = 26
+    compileSdkVersion = 35
+    targetSdkVersion = 35
     androidxActivityVersion = '1.8.0'
     androidxAppCompatVersion = '1.6.1'
     androidxCoordinatorLayoutVersion = '1.2.0'

@@ -65,18 +65,53 @@ type HealthConnectPluginApi = {
   openHealthConnectSetting?: () => Promise<void>;
 };
 
+// Plugin name varies by Capacitor Health Connect plugin author. Order is
+// tried in priority — the first one that exists wins.
+const HEALTH_CONNECT_PLUGIN_NAMES = [
+  "HealthConnectPlugin",      // @kiwi-health/capacitor-health-connect older
+  "HealthConnect",            // @kiwi-health/capacitor-health-connect newer
+  "CapacitorHealthConnect",   // various community packages
+  "Health",                   // capacitor-health-android / @capacitor-community/health
+  "CapacitorHealth",          // some forks
+] as const;
+
 function getPlugin(): HealthConnectPluginApi | null {
   if (typeof window === "undefined") return null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cap = (window as any).Capacitor;
   if (!cap?.isNativePlatform?.()) return null;
-  // The plugin name as registered by Capacitor differs slightly between
-  // implementations; check both common names.
-  return (
-    cap.Plugins?.HealthConnectPlugin ??
-    cap.Plugins?.HealthConnect ??
-    null
-  );
+
+  const plugins = cap.Plugins ?? {};
+  for (const name of HEALTH_CONNECT_PLUGIN_NAMES) {
+    if (plugins[name]) {
+      // First-time debug log so we know which name resolved (useful when
+      // diagnosing plugin-version mismatches). Logs once per page load.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!(window as any).__hcPluginLogged) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any).__hcPluginLogged = true;
+        console.info(
+          `[healthConnect] Using plugin "${name}". Available plugin keys:`,
+          Object.keys(plugins),
+        );
+      }
+      return plugins[name];
+    }
+  }
+
+  // Nothing matched. Log everything we DID see so the user can tell us.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!(window as any).__hcMissingLogged) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__hcMissingLogged = true;
+    console.warn(
+      "[healthConnect] Plugin not found. Available plugin keys:",
+      Object.keys(plugins),
+      "Expected one of:",
+      HEALTH_CONNECT_PLUGIN_NAMES,
+    );
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -85,7 +120,21 @@ function getPlugin(): HealthConnectPluginApi | null {
 
 export async function checkAvailability(): Promise<HealthConnectAvailability> {
   const plugin = getPlugin();
-  if (!plugin) return "unsupported";
+  if (!plugin) {
+    // Distinguish "running on web" from "running on native but plugin failed
+    // to register" — the second one is a developer/build problem and we
+    // want it visible. The web case stays silent.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cap = typeof window !== "undefined" ? (window as any).Capacitor : null;
+    if (cap?.isNativePlatform?.()) {
+      console.warn(
+        "[healthConnect] On native platform but plugin proxy missing — " +
+          "the plugin's npm package is likely not registered. Run " +
+          "`pnpm cap:sync` and rebuild the APK.",
+      );
+    }
+    return "unsupported";
+  }
   try {
     const res = await plugin.checkAvailability();
     const a = String(res.availability ?? "").toLowerCase();

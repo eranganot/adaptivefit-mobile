@@ -111,9 +111,20 @@ export function SettingsClient({ locale, activeGoals, weightEntries, healthConne
         case "ok":
           setSyncResult(`Synced — ${result.daysFetched} days updated`);
           break;
-        case "unsupported":
-          setSyncResult("Health Connect is only available on Android.");
+        case "unsupported": {
+          // If we're actually running on Android but still got "unsupported",
+          // the plugin failed to register — show a developer-y message
+          // instead of the generic "Android only" line.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const isAndroid = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
+            .Capacitor?.isNativePlatform?.();
+          setSyncResult(
+            isAndroid
+              ? "Plugin missing — check capacitor.plugins.json and rebuild the APK."
+              : "Health Connect is only available on Android.",
+          );
           break;
+        }
         case "not-installed":
           setSyncResult("Install Health Connect from the Play Store to sync.");
           break;
