@@ -13,6 +13,17 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!--
+          Android 15 (targetSdk 35) enforces edge-to-edge layout by default,
+          which draws our WebView content behind the status bar. The app's
+          CSS doesn't currently apply env(safe-area-inset-top), so the top
+          row (header / gear icon) ends up under the status icons.
+
+          The line below opts out — content sits BELOW the status bar like
+          on Android 14. Drop this once the web app properly handles
+          safe-area insets (Phase 7 polish).
+        -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 
 

@@ -37,12 +37,21 @@ export type PermissionResult = {
   granted: string[];
 };
 
+// Health Connect record types we ask permission for. Must match the
+// names the @kiwi-health/capacitor-health-connect plugin's RecordTypeRegistry
+// recognizes — passing an unknown name crashes the bridge (the plugin
+// throws IllegalArgumentException on first encounter, killing the process).
+//
+// HeartRate was dropped from the MVP because this plugin version doesn't
+// register it in its RecordTypeRegistry (verified on Pixel 9 Android 16 +
+// plugin v0.0.40). Phase 8b will revisit — either by switching to a plugin
+// that supports it, or by finding the correct name string (could be
+// "HeartRateSeries" or similar in some forks).
 export const HEALTH_READ_TYPES = [
   "Steps",
   "Distance",
   "ActiveCaloriesBurned",
   "TotalCaloriesBurned",
-  "HeartRate",
 ] as const;
 
 export type HealthReadType = (typeof HEALTH_READ_TYPES)[number];
@@ -294,27 +303,11 @@ export async function readDailyMetrics(
     console.warn("[healthConnect] read ActiveCaloriesBurned failed:", e);
   }
 
-  // ── Heart rate (average across all samples that fall in the day) ──
-  try {
-    const res = await plugin.readRecords({
-      type: "HeartRate",
-      timeRangeFilter,
-    });
-    for (const r of res.records ?? []) {
-      // HeartRate records are series with multiple samples
-      const samples = r.samples ?? [];
-      for (const s of samples) {
-        const ts = new Date(s.time ?? r.startTime);
-        const bpm = Number(s.beatsPerMinute ?? s.bpm ?? 0);
-        if (!bpm) continue;
-        const b = ensureBucket(dayKey(ts));
-        b.hrSum += bpm;
-        b.hrCount += 1;
-      }
-    }
-  } catch (e) {
-    console.warn("[healthConnect] read HeartRate failed:", e);
-  }
+  // ── Heart rate ──
+  // Skipped in MVP: the kiwi-health plugin's RecordTypeRegistry doesn't
+  // recognize "HeartRate" and throws IllegalArgumentException, crashing the
+  // bridge. Phase 8b will either find the right type name or switch plugins.
+  // Bucket .hrSum / .hrCount stay at 0 and avgHr resolves to null.
 
   // ── Build result ──────────────────────────────────────────────
   const result: FitDailyAggregate[] = [];
