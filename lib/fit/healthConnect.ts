@@ -34,28 +34,47 @@ export type HealthConnectAvailability =
   | "unsupported";   // not Android, or older Android version
 
 export type PermissionResult = {
+  /** True iff every REQUIRED permission was granted. Optional permissions
+   *  (currently just ExerciseSession) don't block this becoming true. */
   allGranted: boolean;
   granted: string[];
+  /** Subset of `granted` that lets us call readSessions(). When false,
+   *  syncFromClient silently skips the ExerciseSession read instead of
+   *  failing the whole sync. */
+  hasExerciseSession: boolean;
 };
 
 // Health Connect record types we ask permission for. Must match the
 // names the @kiwi-health/capacitor-health-connect plugin's RecordTypeRegistry
 // recognizes — passing an unknown name crashes the bridge (the plugin
-// throws IllegalArgumentException on first encounter, killing the process).
+// throws IllegalArgumentException on first encounter, killing the process
+// at the JNI layer, which JS try/catch CANNOT recover from).
 //
-// HeartRate is still skipped in 8b — the kiwi-health plugin v0.0.40 doesn't
-// register it in its RecordTypeRegistry. Revisit when we switch plugins or
-// patch one.
+// HeartRate is still skipped in 8b — plugin v0.0.40 doesn't register it.
 //
-// ExerciseSession added in 8b: lets us pull workouts recorded by Strava,
-// Samsung Health, Google Fit, etc., that the user has connected to Health
-// Connect. See docs/PHASE_8B_HEALTH_CONNECT_FULL.md.
-export const HEALTH_READ_TYPES = [
+// ExerciseSession was added then immediately reverted (Phase 8b.1): the same
+// plugin version also lacks it in its RecordTypeRegistry, and including it
+// in the read array caused a native crash on app open via the auto-sync
+// flow. Re-enable when:
+//   - we fork/patch the plugin to register ExerciseSession + HeartRate, OR
+//   - the plugin upstream cuts a release that includes them.
+// All the downstream infra (fit_sessions.source_app column, readSessions()
+// function, syncHealthConnectData sessions[] handling) stays in place so
+// re-enabling is a one-line change to the array below.
+const HEALTH_READ_REQUIRED = [
   "Steps",
   "Distance",
   "ActiveCaloriesBurned",
   "TotalCaloriesBurned",
-  "ExerciseSession",
+] as const;
+
+const HEALTH_READ_OPTIONAL: readonly string[] = [
+  // "ExerciseSession",  // see comment above
+] as const;
+
+export const HEALTH_READ_TYPES = [
+  ...HEALTH_READ_REQUIRED,
+  ...HEALTH_READ_OPTIONAL,
 ] as const;
 
 export type HealthReadType = (typeof HEALTH_READ_TYPES)[number];
@@ -163,7 +182,7 @@ export async function checkAvailability(): Promise<HealthConnectAvailability> {
 
 export async function requestPermissions(): Promise<PermissionResult> {
   const plugin = getPlugin();
-  if (!plugin) return { allGranted: false, granted: [] };
+  if (!plugin) return { allGranted: false, granted: [], hasExerciseSession: false };
   try {
     const res = await plugin.requestHealthPermissions({
       read: [...HEALTH_READ_TYPES],
@@ -175,14 +194,30 @@ export async function requestPermissions(): Promise<PermissionResult> {
       res?.readPermissions ??
       res?.granted ??
       [];
-    const allGranted: boolean =
-      typeof res?.hasAllPermissions === "boolean"
-        ? res.hasAllPermissions
-        : granted.length === HEALTH_READ_TYPES.length;
-    return { allGranted, granted };
+
+    // ── Required check ─────────────────────────────────────────────
+    // The plugin sometimes returns short type names ("Steps") and sometimes
+    // fully-qualified permission strings ("android.permission.health.READ_STEPS").
+    // Match permissively — substring check works for both shapes and is
+    // forward-compatible with future plugin versions.
+    const grantedLower = granted.map((g) => g.toLowerCase());
+    const isGranted = (typeName: string): boolean => {
+      const lower = typeName.toLowerCase();
+      return grantedLower.some((g) => g.includes(lower));
+    };
+
+    const requiredGranted = HEALTH_READ_REQUIRED.every(isGranted);
+    const hasExerciseSession = isGranted("ExerciseSession");
+
+    // Fall back to plugin's own hasAllPermissions only when it's clearly
+    // talking about the SAME set we requested (i.e. all 5). If only some
+    // are missing, we'd rather trust our explicit per-type check.
+    const allGranted: boolean = requiredGranted;
+
+    return { allGranted, granted, hasExerciseSession };
   } catch (e) {
     console.warn("[healthConnect] requestPermissions failed:", e);
-    return { allGranted: false, granted: [] };
+    return { allGranted: false, granted: [], hasExerciseSession: false };
   }
 }
 
@@ -374,6 +409,20 @@ function numericField(rec: unknown, key: string): number {
 export async function readSessions(
   daysBack: number,
 ): Promise<FitSessionSummary[]> {
+  // ── Feature gate ──────────────────────────────────────────────
+  // If "ExerciseSession" isn't in HEALTH_READ_TYPES, the plugin won't
+  // have asked for the permission and likely doesn't recognise the type
+  // at all (kiwi-health v0.0.40 doesn't register it). Hitting the bridge
+  // anyway can throw at the Kotlin JNI layer, which propagates as a
+  // native crash that JS try/catch CANNOT recover from. The auto-sync
+  // on app open hit exactly this and produced the "AdaptiveFit keeps
+  // stopping" loop. So we bail out BEFORE touching the bridge.
+  //
+  // Re-enable by adding "ExerciseSession" back to HEALTH_READ_OPTIONAL
+  // — the feature gate above does all the conditionalisation.
+  const enabled = (HEALTH_READ_TYPES as readonly string[]).includes("ExerciseSession");
+  if (!enabled) return [];
+
   const plugin = getPlugin();
   if (!plugin) return [];
 
