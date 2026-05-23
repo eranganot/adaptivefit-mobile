@@ -15,7 +15,7 @@ AdaptiveFit is a self-hosted coaching app that replaces a Gemini chat workflow w
 - **Generates a 4-week periodized training roadmap** with taper/peak/deload phases tied to a goal target date — inline editable/reschedulable from the Roadmap tab
 - **Tracks four goal categories** (running, weight loss, body composition, strength) with per-category analytics and coaching logic
 - **Logs body weight** over time with a dedicated weight-log UI in Settings
-- **Ingests Google Fit step counts** as passive activity signal
+- **Reads daily Health Connect aggregates** (steps, distance, calories) on Android via the native Capacitor shell — on-device, no cloud OAuth
 - **Tracks live GPS runs** with a Mapbox map and real-time pace overlays
 - **Shows analytics** per goal category — weekly distance, RPE × pace trends, lift progression, weight trend, daily active-time × effort chart
 - **Bilingual UI** — English (LTR) and Hebrew (RTL), switchable per user
@@ -52,7 +52,7 @@ AdaptiveFit is a self-hosted coaching app that replaces a Gemini chat workflow w
 | Workouts | `/workouts` | Full workout log — add, edit, delete; live GPS tracker for runs |
 | Roadmap | `/roadmap` | 4-week periodized plan; inline edit (title + date), reschedule, delete |
 | Analytics | `/analytics` | Per-category charts, daily activity chart, coach level bar, stat tiles |
-| Settings | `/settings` | Language, theme, multi-goal management, weight log, Training Level override, Google Fit |
+| Settings | `/settings` | Language, theme, multi-goal management, weight log, Training Level override, Health Connect sync |
 
 ### Coach tab (floating)
 
@@ -237,6 +237,55 @@ git push origin main        # triggers Railway build + deploy
 ```
 
 Schema changes: run `pnpm db:push` pointed at the Railway `DATABASE_URL`, or execute DDL directly in the Railway SQL console.
+
+---
+
+## Mobile shell (Capacitor, Android)
+
+The Android app is a thin Capacitor 6 native wrapper around the live web app — **no JS bundled into the APK**. The WebView points at Railway in production, or your laptop's LAN IP in dev mode. Background-capable GPS, Health Connect, and a foreground-service notification all live in this shell.
+
+### Build the APK
+
+```bash
+pnpm cap:sync                  # syncs web config + plugins into android/
+cd android
+./gradlew assembleDebug        # outputs app/build/outputs/apk/debug/app-debug.apk
+pnpm android:install-debug     # adb install -r the debug APK
+```
+
+### Dev mode (LAN URL)
+
+Set `CAPACITOR_DEV=1` at sync time to point the WebView at your laptop's Next.js dev server instead of Railway. The default LAN URL is `http://10.0.0.20:3000` — override with `CAPACITOR_DEV_URL` if your IP differs.
+
+```powershell
+$env:CAPACITOR_DEV="1"; pnpm cap:sync   # PowerShell
+# CAPACITOR_DEV=1 pnpm cap:sync          # bash/zsh
+```
+
+### Why we force Kotlin 2.2.10
+
+`android/app/build.gradle` has a `resolutionStrategy.force` block pinning kotlin-stdlib to 2.2.10. The kiwi-health Health Connect plugin's compiled bytecode references `kotlin.coroutines.jvm.internal.SpillingKt`, which **only exists in Kotlin 2.x stdlib JARs** (verified by scanning the Gradle JAR cache). Without the force, AGP picks up an older 1.x stdlib transitively and the first suspending plugin call crashes with `NoClassDefFoundError`.
+
+### proguard-android.txt → -optimize.txt
+
+AGP 9.2.1 rejected the legacy `proguard-android.txt` because it disables R8 optimization passes (`-dontoptimize`). Every Capacitor plugin still references it. Rather than patching `node_modules/` (and re-patching on every `pnpm install`), `android/proguard-fix.gradle` is applied from `android/build.gradle` — at evaluation time it rewrites every subproject's proguard config to use `proguard-android-optimize.txt` instead. Idempotent, survives reinstalls.
+
+### Health Connect
+
+Android-only, on-device, **no cloud OAuth**. The native shell calls the kiwi-health plugin which reads daily aggregates from the Health Connect app on the device, then POSTs them to a server action which upserts into `fit_daily_metrics`. Same table the old Google Fit REST path used → analytics & home widget keep working unchanged.
+
+Requirements:
+- Health Connect app installed on the device (pre-installed on Android 14+, manual install on older).
+- User has granted READ permissions for Steps, Distance, ActiveCaloriesBurned, TotalCaloriesBurned. HeartRate is deferred (the plugin's RecordTypeRegistry doesn't include it yet).
+- The presence of `fit_daily_metrics` rows for the user is the "connected" signal — there's no oauth_tokens row anymore.
+
+Trigger a sync: **Settings → Health Connect → Sync now**.
+
+### Google OAuth user-agent override
+
+Google's "Use secure browsers" policy blocks the default Android WebView UA (`; wv` suffix) with `disallowed_useragent`. `capacitor.config.ts` sets `overrideUserAgent` to a plain Chrome string so OAuth completes. **Not Play-Store-policy compliant** — fine for a sideloaded single-user app. If we ever publish on Play, swap for Chrome Custom Tabs + deep-link.
+
+If you have Google's Advanced Protection Program enabled, OAuth in a WebView is blocked regardless of UA — temporarily disable APP at <https://myaccount.google.com/advanced-protection>.
 
 ---
 

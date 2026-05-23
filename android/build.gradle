@@ -17,6 +17,12 @@ buildscript {
 
 apply from: "variables.gradle"
 
+// Phase 7: rewrite legacy proguard-android.txt → proguard-android-optimize.txt
+// in every Capacitor plugin at evaluation time. See proguard-fix.gradle for
+// rationale. Replaces the per-plugin node_modules edits we previously had to
+// re-apply after every `pnpm install`.
+apply from: "proguard-fix.gradle"
+
 allprojects {
     repositories {
         google()

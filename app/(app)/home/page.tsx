@@ -150,21 +150,19 @@ export default async function HomePage() {
   }
   const pendingColdStart = await getPendingColdStart().catch(() => null);
 
-  // Yesterday's Fit stats (shown only if Google Fit connected)
+  // Yesterday's Fit stats. Phase 8: Health Connect is on-device and has no
+  // oauth_tokens row to gate on — the existence of yesterday's metric row IS
+  // the signal that the user has connected & synced. If the row's absent, the
+  // widget simply doesn't render (handled in HomeClient).
   let fitYesterday: { steps: number | null; activeMinutes: number | null } | null = null;
   try {
-    const fitConnected = await db.query.oauthTokens.findFirst({
-      where: (t, { and }) => and(eq(t.userId, user.id), eq(t.provider, "google_fit"), eq(t.status, "active")),
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yDate = yesterday.toISOString().slice(0, 10);
+    const metric = await db.query.fitDailyMetrics.findFirst({
+      where: (t, { and }) => and(eq(t.userId, user.id), eq(t.date, yDate)),
     });
-    if (fitConnected) {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yDate = yesterday.toISOString().slice(0, 10);
-      const metric = await db.query.fitDailyMetrics.findFirst({
-        where: (t, { and }) => and(eq(t.userId, user.id), eq(t.date, yDate)),
-      });
-      if (metric) fitYesterday = { steps: metric.steps, activeMinutes: metric.activeMinutes };
-    }
+    if (metric) fitYesterday = { steps: metric.steps, activeMinutes: metric.activeMinutes };
   } catch (e) {
     console.error("fitYesterday non-fatal:", e);
   }

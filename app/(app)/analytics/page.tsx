@@ -102,7 +102,7 @@ export default async function AnalyticsPage() {
           </div>
         </div>
 
-        {/* Steps tile — only shown when Google Fit is connected */}
+        {/* Steps tile — only shown when we have Health Connect data synced */}
         {fitSteps7dAvg != null && (
           <div className="col-span-2 rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
             <div className="flex items-center gap-2">
@@ -112,7 +112,7 @@ export default async function AnalyticsPage() {
               </p>
             </div>
             <p className="mt-1 text-2xl font-bold">{fitSteps7dAvg.toLocaleString()}</p>
-            <p className="mt-1 text-[10px] text-muted-foreground">From Google Fit</p>
+            <p className="mt-1 text-[10px] text-muted-foreground">From Health Connect</p>
           </div>
         )}
       </div>

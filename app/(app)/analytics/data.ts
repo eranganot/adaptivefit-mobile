@@ -100,7 +100,7 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   // A3: last 28 days for daily activity chart
   const twentyEightDaysAgo = new Date(now.getTime() - 28 * 86_400_000);
 
-  const [weeklyRaw, sessionsRaw, coachState, fitConnected, fitMetrics, activeGoal, bodyMetricRows, liftRows, dailyActivityRaw] = await Promise.all([
+  const [weeklyRaw, sessionsRaw, coachState, fitMetrics, activeGoal, bodyMetricRows, liftRows, dailyActivityRaw] = await Promise.all([
     // ── 12-week weekly volume buckets ─────────────────────────────────────
     db
       .select({
@@ -134,12 +134,9 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       where: eq(userLevelState.userId, user.id),
     }),
 
-    // ── Google Fit connected? ─────────────────────────────────────────────
-    db.query.oauthTokens.findFirst({
-      where: (t, { and }) => and(eq(t.userId, user.id), eq(t.provider, "google_fit"), eq(t.status, "active")),
-    }),
-
     // ── Last 7 days of daily step counts ─────────────────────────────────
+    // Phase 8: Health Connect writes here directly from the client. There's no
+    // oauth_tokens row to gate on — presence of data IS the "connected" signal.
     db
       .select({ steps: fitDailyMetrics.steps })
       .from(fitDailyMetrics)
@@ -230,9 +227,11 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       : 0;
   const peakWeekKm = weekly.reduce((m, w) => Math.max(m, w.km), 0);
 
-  // 7-day average steps (null if Fit not connected)
+  // 7-day average steps. Phase 8: Health Connect is the source; the tile shows
+  // as soon as we have any synced rows. (Old behaviour required a google_fit
+  // oauth token, which no longer exists — see comment in the query block.)
   let fitSteps7dAvg: number | null = null;
-  if (fitConnected && fitMetrics.length > 0) {
+  if (fitMetrics.length > 0) {
     const stepsWithData = fitMetrics.filter((m) => m.steps != null);
     if (stepsWithData.length > 0) {
       fitSteps7dAvg = Math.round(
