@@ -47,10 +47,46 @@ export async function logManualWorkout(input: {
     const footPain = input.footPain;
     const notes = input.notes.trim();
 
+    // If this log came from the GPS tracker, pull distance + duration off the
+    // run_sessions row so the workout_logs row carries them too. Without this
+    // copy, the analytics queries (weekly distance, RPE × pace, daily active
+    // minutes) all sum nulls → display 0/empty. The `paceSecPerKm` and `rtl`
+    // columns are GENERATED from distance_km + duration_sec, so writing those
+    // two fields cascades automatically.
+    let runDistanceKm: string | undefined;
+    let runDurationSec: number | undefined;
+    if (input.runSessionId) {
+      try {
+        const rs = await db.query.runSessions.findFirst({
+          where: eq(runSessions.id, input.runSessionId),
+          columns: { distanceKm: true, durationSec: true },
+        });
+        if (rs) {
+          // Only carry values that look real — avoids stamping zeros on a row
+          // that was started but never moved (which would make RTL=0 noise in
+          // the weekly distance chart).
+          const dk = Number(rs.distanceKm);
+          if (Number.isFinite(dk) && dk > 0) runDistanceKm = rs.distanceKm;
+          if (rs.durationSec > 0) runDurationSec = rs.durationSec;
+        }
+      } catch (e) {
+        console.error("run_session lookup non-fatal:", e);
+      }
+    }
+
     // 1. Insert workout log
     const [log] = await db
       .insert(workoutLogs)
-      .values({ userId: user.id, performedAt: new Date(), type: "run", rpe, footPain, notesRaw: notes || null })
+      .values({
+        userId: user.id,
+        performedAt: new Date(),
+        type: "run",
+        rpe,
+        footPain,
+        notesRaw: notes || null,
+        distanceKm: runDistanceKm,
+        durationSec: runDurationSec,
+      })
       .returning();
 
     // Link run session → workout log if this came from GPS run

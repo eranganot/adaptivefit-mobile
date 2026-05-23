@@ -2,8 +2,8 @@
 
 import {
   CartesianGrid,
+  ComposedChart,
   Line,
-  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -15,6 +15,12 @@ import type { BodyMetricPoint } from "@/app/(app)/analytics/data";
 type Props = {
   data: BodyMetricPoint[];
   targetWeightKg: number | null;
+  /**
+   * Phase-7 cleanup: when true (e.g. body_shape goal), render a second axis
+   * with bodyFatPct overlaid. Replaces the separate Body Composition card,
+   * which used to render this same chart twice.
+   */
+  showBodyFat?: boolean;
 };
 
 function CustomTooltip({
@@ -40,7 +46,7 @@ function CustomTooltip({
   );
 }
 
-export function WeightTrendChart({ data, targetWeightKg }: Props) {
+export function WeightTrendChart({ data, targetWeightKg, showBodyFat = false }: Props) {
   const withWeight = data.filter((d) => d.weightKg != null);
   if (withWeight.length === 0) return null;
 
@@ -48,10 +54,16 @@ export function WeightTrendChart({ data, targetWeightKg }: Props) {
   const minW = Math.floor(Math.min(...weights, targetWeightKg ?? Infinity) - 2);
   const maxW = Math.ceil(Math.max(...weights) + 2);
 
+  // Only render the body-fat overlay if the caller asked for it AND there's
+  // at least one bodyFat reading in the window. Otherwise the right axis
+  // takes up space with no line, which looks broken.
+  const hasBodyFatData = withWeight.some((d) => d.bodyFatPct != null);
+  const renderBodyFat = showBodyFat && hasBodyFatData;
+
   return (
     <div className="h-48 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={withWeight} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
+        <ComposedChart data={withWeight} margin={{ top: 4, right: renderBodyFat ? 8 : 8, left: -24, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
           <XAxis
             dataKey="date"
@@ -61,15 +73,29 @@ export function WeightTrendChart({ data, targetWeightKg }: Props) {
             interval="preserveStartEnd"
           />
           <YAxis
+            yAxisId="kg"
             domain={[minW, maxW]}
             tick={{ fontSize: 10 }}
             tickLine={false}
             axisLine={false}
             tickFormatter={(v) => `${v}kg`}
           />
+          {renderBodyFat && (
+            <YAxis
+              yAxisId="bf"
+              orientation="right"
+              domain={["auto", "auto"]}
+              tick={{ fontSize: 10 }}
+              tickLine={false}
+              axisLine={false}
+              width={30}
+              tickFormatter={(v) => `${v}%`}
+            />
+          )}
           <Tooltip content={<CustomTooltip />} />
           {targetWeightKg != null && (
             <ReferenceLine
+              yAxisId="kg"
               y={targetWeightKg}
               stroke="#10b981"
               strokeDasharray="4 4"
@@ -77,6 +103,7 @@ export function WeightTrendChart({ data, targetWeightKg }: Props) {
             />
           )}
           <Line
+            yAxisId="kg"
             type="monotone"
             dataKey="weightKg"
             name="Weight"
@@ -86,7 +113,20 @@ export function WeightTrendChart({ data, targetWeightKg }: Props) {
             activeDot={{ r: 5 }}
             connectNulls={false}
           />
-        </LineChart>
+          {renderBodyFat && (
+            <Line
+              yAxisId="bf"
+              type="monotone"
+              dataKey="bodyFatPct"
+              name="Body fat"
+              stroke="#f97316"
+              strokeWidth={2}
+              dot={{ r: 3, fill: "#f97316" }}
+              activeDot={{ r: 5 }}
+              connectNulls={false}
+            />
+          )}
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

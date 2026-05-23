@@ -1,11 +1,10 @@
 import { getTranslations } from "next-intl/server";
 import { getAnalyticsData } from "./data";
-import { VolumeChart } from "@/components/analytics/VolumeChart";
 import { TrendChartCard } from "@/components/analytics/TrendChartCard";
 import { WeightTrendChart } from "@/components/analytics/WeightTrendChart";
 import { LiftProgressChart } from "@/components/analytics/LiftProgressChart";
 import { DailyActivityChart } from "@/components/analytics/DailyActivityChart";
-import { TrendingUp, TrendingDown, Minus, Footprints, Scale, Activity, Dumbbell } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Footprints, Scale, Dumbbell } from "lucide-react";
 
 function TrendChip({ value, ideal }: { value: string; ideal?: boolean }) {
   if (ideal) {
@@ -48,8 +47,10 @@ export default async function AnalyticsPage() {
     );
   }
 
+  // coachLevel + freezeActive intentionally NOT destructured — the Coach
+  // Level card moved entirely to the Home screen (Phase-7 cleanup).
   const {
-    sessions, weekly, coachLevel, freezeActive, avgRpe,
+    sessions, weekly, avgRpe,
     fitSteps7dAvg, fitDistance7dAvgKm, fitActiveMin7dAvg,
     activeGoalCategory, activeGoalTargetValue, activeGoalTargetUnit,
     bodyMetricHistory, liftHistory, dailyActivity,
@@ -167,19 +168,13 @@ export default async function AnalyticsPage() {
         )}
       </div>
 
-      {/* ── 3. Weekly cardio sessions (count) ───────────────────────── */}
-      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-        <p className="mb-1 text-sm font-semibold">Weekly Cardio Sessions</p>
-        {sessions.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            Log a cardio session to see your weekly count.
-          </p>
-        ) : (
-          <VolumeChart data={weekly} metric="sessions" />
-        )}
-      </div>
+      {/* Weekly Cardio Sessions removed (Phase-7 cleanup): the same info is
+          encoded more usefully in the Daily Activity chart above (effort per
+          day) and the Weekly Distance tile (km, which the user cares about
+          more than session count). VolumeChart left in components/ in case
+          we want a 12-week distance bar chart back later. */}
 
-      {/* ── 4. Distance × Pace toggle (TrendChartCard) ──────────────── */}
+      {/* ── Distance × Pace toggle (TrendChartCard) ────────────────── */}
       <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
         <p className="mb-3 text-sm font-semibold">{t("chart.rpePace")}</p>
         {sessions.filter((s) => s.paceMinPerKm != null).length === 0 ? (
@@ -191,11 +186,17 @@ export default async function AnalyticsPage() {
         )}
       </div>
 
-      {/* ── 5. Weight trend ─────────────────────────────────────────── */}
+      {/* ── Weight trend (with optional body-fat overlay) ──────────── */}
+      {/* Phase-7 cleanup: the separate "Body Composition" card was just this
+          chart re-rendered, so it's gone. When the active goal is body_shape
+          AND there's at least one body-fat reading, this card now shows both
+          lines on a dual axis. */}
       <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
         <div className="flex items-center gap-2 mb-3">
           <Scale className="h-4 w-4 text-indigo-500" />
-          <p className="text-sm font-semibold">Weight Trend</p>
+          <p className="text-sm font-semibold">
+            {showBodyComposition ? "Weight & Body Fat" : "Weight Trend"}
+          </p>
         </div>
         {bodyMetricHistory.filter((d) => d.weightKg != null).length === 0 ? (
           <p className="py-4 text-center text-xs text-muted-foreground">
@@ -207,37 +208,14 @@ export default async function AnalyticsPage() {
             targetWeightKg={
               activeGoalTargetUnit === "kg" ? activeGoalTargetValue : null
             }
+            showBodyFat={showBodyComposition}
           />
         )}
       </div>
 
-      {/* ── 6. Coach level ──────────────────────────────────────────── */}
-      <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {t("chart.coachLevel")}
-          </p>
-          {freezeActive && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-              ❄ Freeze
-            </span>
-          )}
-        </div>
-        <div className="mt-2 flex items-end gap-3">
-          <span className="text-3xl font-bold">{coachLevel}</span>
-          <span className="mb-0.5 text-sm text-muted-foreground">/10</span>
-        </div>
-        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-          <div
-            className="h-full rounded-full bg-blue-600 transition-all"
-            style={{ width: `${Math.round((coachLevel / 10) * 100)}%` }}
-          />
-        </div>
-        <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
-          <span>Base builder</span>
-          <span>Race-ready</span>
-        </div>
-      </div>
+      {/* Coach Level removed (Phase-7 cleanup) — already shown on the Home
+          screen as the primary level surface; second copy here added clutter
+          without new information. Freeze state is also shown on Home. */}
 
       {/* ── Goal-specific insights (only when relevant data exists) ─── */}
       {showLifts && (
@@ -247,16 +225,6 @@ export default async function AnalyticsPage() {
             <p className="text-sm font-semibold">Lift Progression (kg)</p>
           </div>
           <LiftProgressChart data={liftHistory} />
-        </div>
-      )}
-
-      {showBodyComposition && (
-        <div className="rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
-          <div className="flex items-center gap-2 mb-3">
-            <Activity className="h-4 w-4 text-indigo-500" />
-            <p className="text-sm font-semibold">Body Composition (body fat %)</p>
-          </div>
-          <WeightTrendChart data={bodyMetricHistory} targetWeightKg={null} />
         </div>
       )}
     </div>
