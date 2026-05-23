@@ -98,8 +98,13 @@
     <uses-permission android:name="android.permission.health.READ_DISTANCE" />
     <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED" />
     <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />
-    <!-- READ_HEART_RATE removed in Phase 8 MVP — plugin doesn't support the
-         HeartRate record type yet (revisits in Phase 8b). -->
+    <!-- Phase 8b: READ_EXERCISE lets us pull ExerciseSession records, i.e.  -->
+    <!-- workouts originally recorded by Strava / Samsung Health / Google    -->
+    <!-- Fit that the user has connected to Health Connect. Without this    -->
+    <!-- perm, readRecords({type:'ExerciseSession'}) returns empty.         -->
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <!-- READ_HEART_RATE still removed — plugin doesn't support the HeartRate
+         record type at v0.0.40. Revisits in Phase 8b.6. -->
 
     <!-- Health Connect's package-visibility query (Android 11+). Without  -->
     <!-- this, our app can't even detect whether Health Connect is        -->

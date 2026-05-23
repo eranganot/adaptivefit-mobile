@@ -1,0 +1,25 @@
+// Capacitor 6 plugins were authored before AGP 8.7 forbade
+// `getDefaultProguardFile('proguard-android.txt')`. Rather than patching every
+// plugin's build.gradle in node_modules (which Windows' 260-char path limit
+// makes painful, and which pnpm wipes on every install), this init-time
+// hook rewrites the proguard config of every subproject as it's evaluated.
+//
+// Applied from android/build.gradle.
+subprojects { proj ->
+    proj.afterEvaluate {
+        if (proj.plugins.hasPlugin('com.android.library') ||
+            proj.plugins.hasPlugin('com.android.application')) {
+            proj.android.buildTypes.all { bt ->
+                def replaced = bt.proguardFiles.collect { f ->
+                    f.name == 'proguard-android.txt'
+                        ? getDefaultProguardFile('proguard-android-optimize.txt')
+                        : f
+                }
+                if (replaced != bt.proguardFiles.toList()) {
+                    bt.proguardFiles.clear()
+                    bt.proguardFiles(*replaced.toArray())
+                }
+            }
+        }
+    }
+}

@@ -1,5 +1,32 @@
 apply plugin: 'com.android.application'
 
+// Pin Kotlin stdlib to 2.2.10 across ALL configurations.
+//
+// Why 2.2.x specifically:
+//   - The kiwi-health/capacitor-health-connect plugin's compiled bytecode
+//     references kotlin.coroutines.jvm.internal.SpillingKt at runtime
+//     (verified via apkanalyzer + reflect dex search).
+//   - SpillingKt was introduced in Kotlin 2.x — it does NOT exist in any
+//     1.x stdlib JAR (verified by scanning the entire Gradle cache for
+//     "*Spilling*" — only 2.2.0+ JARs contain it).
+//   - AGP 9.2.1 already pulls 2.2.10 transitively for its own use; this
+//     force just aligns the app module with what AGP is already using.
+//
+// Earlier attempts forced 1.9.24, which actively REMOVED SpillingKt from
+// the APK and broke any suspending plugin call.
+configurations.all {
+    resolutionStrategy {
+        force "org.jetbrains.kotlin:kotlin-stdlib:2.2.10"
+        force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10"
+        force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.10"
+        force "org.jetbrains.kotlin:kotlin-stdlib-common:2.2.10"
+        // kotlinx-coroutines 1.7.3 is compatible with Kotlin 2.x (cross-version
+        // by design); keeping the same version we used before.
+        force "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3"
+        force "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+    }
+}
+
 android {
     namespace "com.adaptivefit.app"
     compileSdk rootProject.ext.compileSdkVersion
@@ -54,6 +81,17 @@ dependencies {
     // Without this dep present, the plugin silently fails to register and
     // window.Capacitor.Plugins.HealthConnect is missing at runtime.
     implementation "androidx.health.connect:connect-client:1.1.0-alpha07"
+
+    // Kotlin coroutines + stdlib (Phase 8). The kiwi-health plugin's compiled
+    // bytecode references kotlin.coroutines.jvm.internal.SpillingKt which
+    // exists only in Kotlin 2.x stdlib (verified by scanning the Gradle JAR
+    // cache). 1.9.24 does NOT contain it.
+    //
+    // Explicit declaration at 2.2.10 aligned with the resolutionStrategy
+    // force above. Without this, app-level transitives could request an
+    // older version and Gradle's natural resolution would not consider 2.x.
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.2.10"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
 }
 
 apply from: 'capacitor.build.gradle'
@@ -66,3 +104,4 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+

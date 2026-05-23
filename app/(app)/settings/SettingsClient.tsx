@@ -108,9 +108,17 @@ export function SettingsClient({ locale, activeGoals, weightEntries, healthConne
     startSync(async () => {
       const result: SyncResult = await syncHealthConnect({ daysBack: 30, interactive: true });
       switch (result.kind) {
-        case "ok":
-          setSyncResult(`Synced — ${result.daysFetched} days updated`);
+        case "ok": {
+          // Phase 8b — report both daily aggregates and ExerciseSessions.
+          // Most users will see only days unless they have a watch or
+          // another app feeding workouts into Health Connect.
+          const parts = [`${result.daysFetched} day${result.daysFetched === 1 ? "" : "s"}`];
+          if (result.sessionsFetched > 0) {
+            parts.push(`${result.sessionsFetched} session${result.sessionsFetched === 1 ? "" : "s"}`);
+          }
+          setSyncResult(`Synced — ${parts.join(", ")} updated`);
           break;
+        }
         case "unsupported": {
           // If we're actually running on Android but still got "unsupported",
           // the plugin failed to register or uses a different name than we

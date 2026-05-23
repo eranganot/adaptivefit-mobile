@@ -2,11 +2,11 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, userLevelState, fitDailyMetrics } from "@/lib/db/schema";
+import { users, userLevelState, fitDailyMetrics, fitSessions } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
-import type { FitDailyAggregate } from "@/lib/fit/types";
+import type { FitDailyAggregate, FitSessionSummary } from "@/lib/fit/types";
 
 export async function setLocale(locale: "en" | "he") {
   try {
@@ -145,11 +145,30 @@ export async function clearManualLevelOverride(): Promise<{ success: boolean; er
  * `fit_daily_metrics` table so the rest of the app (home screen yesterday
  * widget, analytics) keeps working unchanged.
  *
+ * Phase 8b: also accepts `sessions[]` (ExerciseSessionRecord summaries) and
+ * upserts them into `fit_sessions`. Sessions are workouts originally recorded
+ * by external apps (Strava, Samsung Health, etc.) that the user shares with
+ * AdaptiveFit via Health Connect. AdaptiveFit's own GPS-tracked runs are NOT
+ * in this stream — they live in `run_sessions` and remain authoritative for
+ * AF workouts.
+ *
+ * Callers that still pass the old `days`-only array stay supported for one
+ * release — see the input-shape normalisation below.
+ *
  * Web callers get a no-op result (Health Connect is Android-only).
  */
+type SyncInput =
+  | FitDailyAggregate[]                                          // legacy shape
+  | { days: FitDailyAggregate[]; sessions?: FitSessionSummary[] };
+
 export async function syncHealthConnectData(
-  days: FitDailyAggregate[],
-): Promise<{ success: boolean; daysFetched?: number; error?: string }> {
+  input: SyncInput,
+): Promise<{
+  success: boolean;
+  daysFetched?: number;
+  sessionsFetched?: number;
+  error?: string;
+}> {
   try {
     const session = await auth();
     if (!session?.user?.email) return { success: false, error: "Not authenticated" };
@@ -159,11 +178,21 @@ export async function syncHealthConnectData(
     });
     if (!user) return { success: false, error: "User not found" };
 
-    if (!Array.isArray(days) || days.length === 0) {
-      return { success: true, daysFetched: 0 };
+    // Accept both the legacy bare-array shape and the new object shape so
+    // an old client APK on someone's phone doesn't error after this deploy.
+    const days: FitDailyAggregate[] = Array.isArray(input)
+      ? input
+      : input.days ?? [];
+    const sessions: FitSessionSummary[] = Array.isArray(input)
+      ? []
+      : input.sessions ?? [];
+
+    if (days.length === 0 && sessions.length === 0) {
+      return { success: true, daysFetched: 0, sessionsFetched: 0 };
     }
 
-    let written = 0;
+    // ── Daily aggregates ──────────────────────────────────────────
+    let daysWritten = 0;
     for (const d of days) {
       // Skip rows with no useful data — keeps the table compact.
       if (!d.steps && !d.distanceM && !d.activeMinutes && !d.avgHr && !d.calories) continue;
@@ -190,12 +219,58 @@ export async function syncHealthConnectData(
             updatedAt: new Date(),
           },
         });
-      written += 1;
+      daysWritten += 1;
+    }
+
+    // ── ExerciseSession records (Phase 8b) ────────────────────────
+    // Upsert keyed on (user_id, fit_session_id). fit_session_id is the
+    // Health Connect record id when available; readSessions falls back to a
+    // deterministic hash so re-reads upsert cleanly rather than duplicating.
+    let sessionsWritten = 0;
+    for (const s of sessions) {
+      if (!s.fitSessionId || !s.startTime || !s.endTime) continue;
+      try {
+        await db
+          .insert(fitSessions)
+          .values({
+            userId: user.id,
+            fitSessionId: s.fitSessionId,
+            activityType: s.activityType,
+            startTime: new Date(s.startTime),
+            endTime: new Date(s.endTime),
+            distanceM: s.distanceM,
+            avgHr: s.avgHr,
+            maxHr: s.maxHr,
+            steps: s.steps,
+            calories: s.calories,
+            sourceApp: s.sourceApp,
+          })
+          .onConflictDoUpdate({
+            target: [fitSessions.userId, fitSessions.fitSessionId],
+            set: {
+              activityType: s.activityType,
+              startTime: new Date(s.startTime),
+              endTime: new Date(s.endTime),
+              distanceM: s.distanceM,
+              avgHr: s.avgHr,
+              maxHr: s.maxHr,
+              steps: s.steps,
+              calories: s.calories,
+              sourceApp: s.sourceApp,
+            },
+          });
+        sessionsWritten += 1;
+      } catch (e) {
+        // Per-session failures shouldn't kill the whole sync. Log and
+        // continue — most likely cause is a row with an out-of-range
+        // activityType from a future HC plugin version.
+        console.warn("[syncHealthConnectData] session upsert failed:", s.fitSessionId, e);
+      }
     }
 
     revalidatePath("/home");
     revalidatePath("/settings");
-    return { success: true, daysFetched: written };
+    return { success: true, daysFetched: daysWritten, sessionsFetched: sessionsWritten };
   } catch (e) {
     console.error("syncHealthConnectData error:", e);
     return { success: false, error: e instanceof Error ? e.message : "Failed to sync" };

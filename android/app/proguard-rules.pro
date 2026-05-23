@@ -19,3 +19,17 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Phase 8 — keep Kotlin coroutines internals. The kiwi-health/capacitor-health-
+# connect plugin's compiled bytecode references kotlin.coroutines.jvm.internal
+# .* classes (like SpillingKt) that some toolchains aggressively strip even
+# with minifyEnabled=false. Keeping them is harmless when minify is off, and
+# prevents a NoClassDefFoundError on the first suspending plugin call.
+-keep class kotlin.coroutines.jvm.internal.** { *; }
+-keep class kotlin.coroutines.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-dontwarn kotlin.coroutines.jvm.internal.**
+
+# Keep the kiwi-health plugin's classes too — its @CapacitorPlugin annotation
+# and reflection-based dispatch need them visible.
+-keep class com.ubiehealth.capacitor.healthconnect.** { *; }

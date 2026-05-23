@@ -438,6 +438,11 @@ export const fitSessions = pgTable(
     steps: integer("steps"),
     calories: integer("calories"),
     route: jsonb("route"),  // [{lat, lon, ts}] polyline if available
+    // Phase 8b: which app originally recorded the session. From Health
+    // Connect's ExerciseSessionRecord.metadata.dataOrigin.packageName
+    // (e.g. "com.strava", "com.google.android.apps.fitness").
+    // Null for legacy Google Fit rows.
+    sourceApp: text("source_app"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
