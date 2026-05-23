@@ -279,7 +279,11 @@ Requirements:
 - User has granted READ permissions for Steps, Distance, ActiveCaloriesBurned, TotalCaloriesBurned. HeartRate is deferred (the plugin's RecordTypeRegistry doesn't include it yet).
 - The presence of `fit_daily_metrics` rows for the user is the "connected" signal — there's no oauth_tokens row anymore.
 
-Trigger a sync: **Settings → Health Connect → Sync now**.
+Sync triggers:
+- **Auto** — every time the app comes to the foreground (throttled to once per 5 min). Implemented in `components/custom/HealthConnectAutoSync.tsx`, mounted at the `(app)` layout. Uses `document.visibilitychange` so it works in both the native shell and a regular browser tab. Silent — failures swallow to the console.
+- **Manual** — **Settings → Health Connect → Sync now** is the user-visible escape hatch with proper UI feedback.
+
+**Ground-truth rule.** For daily aggregates (steps, distance, active minutes, calories) Health Connect is the single source of truth. AdaptiveFit stores per-workout detail (RPE, foot-pain, pace, notes) in `workout_logs` — those are AF-owned and HC has nothing to say about them. The two datasets are kept side-by-side; **we do not combine values**. If HC and a workout_logs row disagree about distance for the same day, the displayed daily-aggregate tile reflects HC; the workout_logs row stays untouched and continues to drive RPE/pace charts. See `BACKLOG.md` for the deferred AF→HC write-back that would unify both into a single record set.
 
 ### Google OAuth user-agent override
 

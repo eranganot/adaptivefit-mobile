@@ -62,6 +62,12 @@ export type AnalyticsData = {
   avgRpe: number;
   peakWeekKm: number;
   fitSteps7dAvg: number | null;
+  // Phase 8b — Health Connect daily aggregates (7d averages). Same source as
+  // fitSteps7dAvg (fit_daily_metrics). Null when no HC rows have been synced
+  // yet. NOT combined with workout_logs values — HC is the source of truth
+  // for daily aggregates; workout_logs covers per-workout detail only.
+  fitDistance7dAvgKm: number | null;
+  fitActiveMin7dAvg: number | null;
   activeGoalCategory: GoalCategory;
   activeGoalTargetValue: number | null;
   activeGoalTargetUnit: string | null;
@@ -134,11 +140,18 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       where: eq(userLevelState.userId, user.id),
     }),
 
-    // ── Last 7 days of daily step counts ─────────────────────────────────
+    // ── Last 7 days of HC daily aggregates ───────────────────────────────
     // Phase 8: Health Connect writes here directly from the client. There's no
     // oauth_tokens row to gate on — presence of data IS the "connected" signal.
+    // Phase 8b: also pulling distanceM and activeMinutes to surface alongside
+    // steps. HC is the ground-truth source for these daily totals — we don't
+    // mix with workout_logs values.
     db
-      .select({ steps: fitDailyMetrics.steps })
+      .select({
+        steps: fitDailyMetrics.steps,
+        distanceM: fitDailyMetrics.distanceM,
+        activeMinutes: fitDailyMetrics.activeMinutes,
+      })
       .from(fitDailyMetrics)
       .where(and(eq(fitDailyMetrics.userId, user.id), gte(fitDailyMetrics.date, sevenDaysAgoDate))),
 
@@ -227,15 +240,29 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       : 0;
   const peakWeekKm = weekly.reduce((m, w) => Math.max(m, w.km), 0);
 
-  // 7-day average steps. Phase 8: Health Connect is the source; the tile shows
-  // as soon as we have any synced rows. (Old behaviour required a google_fit
-  // oauth token, which no longer exists — see comment in the query block.)
+  // 7-day averages from Health Connect. Phase 8: HC is the ground-truth source
+  // for daily aggregates; the tiles show as soon as we have any synced rows.
+  // Each metric is averaged independently across the days that reported it
+  // (HC writes columns sparsely — a day might have steps but no distance).
   let fitSteps7dAvg: number | null = null;
+  let fitDistance7dAvgKm: number | null = null;
+  let fitActiveMin7dAvg: number | null = null;
   if (fitMetrics.length > 0) {
-    const stepsWithData = fitMetrics.filter((m) => m.steps != null);
-    if (stepsWithData.length > 0) {
+    const stepsRows = fitMetrics.filter((m) => m.steps != null);
+    if (stepsRows.length > 0) {
       fitSteps7dAvg = Math.round(
-        stepsWithData.reduce((s, m) => s + (m.steps ?? 0), 0) / stepsWithData.length,
+        stepsRows.reduce((s, m) => s + (m.steps ?? 0), 0) / stepsRows.length,
+      );
+    }
+    const distRows = fitMetrics.filter((m) => m.distanceM != null);
+    if (distRows.length > 0) {
+      const avgM = distRows.reduce((s, m) => s + (m.distanceM ?? 0), 0) / distRows.length;
+      fitDistance7dAvgKm = Math.round((avgM / 1000) * 10) / 10; // one decimal
+    }
+    const minRows = fitMetrics.filter((m) => m.activeMinutes != null);
+    if (minRows.length > 0) {
+      fitActiveMin7dAvg = Math.round(
+        minRows.reduce((s, m) => s + (m.activeMinutes ?? 0), 0) / minRows.length,
       );
     }
   }
@@ -286,6 +313,8 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     avgRpe,
     peakWeekKm: Math.round(peakWeekKm * 10) / 10,
     fitSteps7dAvg,
+    fitDistance7dAvgKm,
+    fitActiveMin7dAvg,
     activeGoalCategory: (activeGoal?.category ?? "running") as GoalCategory,
     activeGoalTargetValue: activeGoal?.targetValue ? parseFloat(activeGoal.targetValue) : null,
     activeGoalTargetUnit: activeGoal?.targetUnit ?? null,

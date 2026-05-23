@@ -49,10 +49,20 @@ export default async function AnalyticsPage() {
   }
 
   const {
-    sessions, weekly, coachLevel, freezeActive, avgRpe, fitSteps7dAvg,
+    sessions, weekly, coachLevel, freezeActive, avgRpe,
+    fitSteps7dAvg, fitDistance7dAvgKm, fitActiveMin7dAvg,
     activeGoalCategory, activeGoalTargetValue, activeGoalTargetUnit,
     bodyMetricHistory, liftHistory, dailyActivity,
   } = data;
+
+  // Phase 8b — Show the Health Connect card iff at least one HC metric has
+  // been synced. HC is the source of truth for these daily aggregates; we do
+  // NOT combine with workout_logs values (workout_logs covers per-workout
+  // detail like RPE/pace/foot-pain, not daily totals).
+  const showHealthConnect =
+    fitSteps7dAvg != null ||
+    fitDistance7dAvgKm != null ||
+    fitActiveMin7dAvg != null;
 
   // Stat tile calculations
   const currentWeekKm = weekly[weekly.length - 1]?.km ?? 0;
@@ -102,17 +112,41 @@ export default async function AnalyticsPage() {
           </div>
         </div>
 
-        {/* Steps tile — only shown when we have Health Connect data synced */}
-        {fitSteps7dAvg != null && (
+        {/* Health Connect daily aggregates (Phase 8b). One card with up to
+            three metrics — steps, distance, active minutes — averaged across
+            the last 7 days. Each cell renders independently so a missing
+            metric (e.g. distance but no active minutes) doesn't blank the
+            card. HC is the source of truth here, separate from the
+            workout-derived stats above. */}
+        {showHealthConnect && (
           <div className="col-span-2 rounded-3xl bg-white p-5 shadow-sm dark:bg-slate-900">
             <div className="flex items-center gap-2">
               <Footprints className="h-4 w-4 text-indigo-500" />
               <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Daily Steps (7d avg)
+                Health Connect — 7d average
               </p>
             </div>
-            <p className="mt-1 text-2xl font-bold">{fitSteps7dAvg.toLocaleString()}</p>
-            <p className="mt-1 text-[10px] text-muted-foreground">From Health Connect</p>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Steps</p>
+                <p className="mt-0.5 text-lg font-bold">
+                  {fitSteps7dAvg != null ? fitSteps7dAvg.toLocaleString() : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Distance</p>
+                <p className="mt-0.5 text-lg font-bold">
+                  {fitDistance7dAvgKm != null ? `${fitDistance7dAvgKm.toFixed(1)} km` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Active</p>
+                <p className="mt-0.5 text-lg font-bold">
+                  {fitActiveMin7dAvg != null ? `${fitActiveMin7dAvg} min` : "—"}
+                </p>
+              </div>
+            </div>
+            <p className="mt-3 text-[10px] text-muted-foreground">From Health Connect</p>
           </div>
         )}
       </div>

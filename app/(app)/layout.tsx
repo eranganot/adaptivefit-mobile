@@ -3,6 +3,7 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { BottomNav } from "@/components/custom/BottomNav";
 import { ThemeGuard } from "@/components/custom/ThemeGuard";
+import { HealthConnectAutoSync } from "@/components/custom/HealthConnectAutoSync";
 import { Settings } from "lucide-react";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -50,6 +51,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
       <BottomNav />
       <ThemeGuard />
+      <HealthConnectAutoSync />
     </div>
   );
 }
