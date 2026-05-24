@@ -199,6 +199,19 @@ export default function HomeClient({
       footPain: number;
       notes: string;
       photo: File | null;
+      // Phase 8b.2: explicit type + optional manual run metrics. Linked
+      // GPS-run logs leave distanceKm/durationSec undefined here so the
+      // server can copy authoritative values from the run_sessions row.
+      type: "run" | "strength" | "mobility" | "other";
+      distanceKm?: number;
+      durationSec?: number;
+      // Phase 8b.3: strength entries. Empty/omitted for non-strength types.
+      strengthEntries?: Array<{
+        exercise: string;
+        weightKg: number;
+        reps: number;
+        sets: number;
+      }>;
     }) => {
       setIsSubmitting(true);
       setSubmitError(null);
@@ -334,6 +347,7 @@ export default function HomeClient({
           <PostWorkout
             isSubmitting={isSubmitting}
             prefillRpe={prefillRpe}
+            hasLinkedRunSession={Boolean(runEndData?.runSessionId)}
             onSubmit={handlePostWorkoutSubmit}
             onCancel={handlePostWorkoutCancel}
           />

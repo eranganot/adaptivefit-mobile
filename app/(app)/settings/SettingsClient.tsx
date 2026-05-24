@@ -147,9 +147,22 @@ export function SettingsClient({ locale, activeGoals, weightEntries, healthConne
         case "needs-update":
           setSyncResult("Update Health Connect from the Play Store, then try again.");
           break;
-        case "permission-denied":
-          setSyncResult("Permission denied. Grant data access in Health Connect settings.");
+        case "permission-denied": {
+          // Name the specific types the plugin reports as missing so the user
+          // knows what to toggle in Health Connect's per-permission UI. The
+          // existing "Settings" button on the HC card deep-links them there
+          // — message points to it explicitly so the path is obvious.
+          // (Pre-Phase-8b.2 this banner fired even when all perms WERE
+          // granted, due to the underscore bug in the matcher; that's now
+          // fixed, so reaching this case means real revocation.)
+          const list = result.missing.length > 0
+            ? result.missing.join(", ")
+            : "one or more required types";
+          setSyncResult(
+            `Permission denied for: ${list}. Tap "Settings" to grant access in Health Connect.`,
+          );
           break;
+        }
         case "error":
           setSyncResult(`Error: ${result.message}`);
           break;

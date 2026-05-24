@@ -12,6 +12,7 @@ import {
   userLevelState,
   feedbackSentiment,
   goals,
+  strengthLogs,
 } from "@/lib/db/schema";
 import { COACH_CHAT_TOOLS, functionNameToActionType } from "@/lib/coach/chatTools";
 import { eq, desc, and, inArray, sql } from "drizzle-orm";
@@ -27,11 +28,44 @@ export type LogResult =
   | { success: true; workoutLogId: string; summary: string; adjustments: string[] }
   | { success: false; error: string };
 
+/** Mirror of workout_logs.type enum. Kept in sync manually with schema.ts —
+ *  Drizzle doesn't yet derive enum constants we can import. */
+const WORKOUT_TYPES = ["run", "strength", "mobility", "other"] as const;
+type WorkoutType = (typeof WORKOUT_TYPES)[number];
+
+/** Server-side shape of a single strength_logs insert. The client converts
+ *  its string-typed draft entries to this numeric shape before sending. */
+export type StrengthEntryInput = {
+  /** Exercise name. Required, non-empty after trim. */
+  exercise: string;
+  /** Weight in kilograms. > 0. */
+  weightKg: number;
+  /** Reps per set. >= 1. */
+  reps: number;
+  /** Number of sets at this weight × reps. >= 1. */
+  sets: number;
+};
+
 export async function logManualWorkout(input: {
   rpe: number;
   footPain: number; // 0 = no pain, 6 = reported pain
   notes: string;
   photo: File | null;
+  /** Phase 8b.2: explicit type. Defaults to "run" for back-compat with any
+   *  caller that hasn't migrated to the typed signature yet. */
+  type?: WorkoutType;
+  /** Phase 8b.2: manual distance (km) for non-GPS run logging. Ignored
+   *  for non-run types. If a runSessionId is also supplied, the
+   *  run_sessions row wins (authoritative GPS distance). */
+  distanceKm?: number;
+  /** Phase 8b.2: manual duration (sec) — same semantics as distanceKm. */
+  durationSec?: number;
+  /** Phase 8b.3: strength sheet entries. Only meaningful when type === "strength".
+   *  When present, the parent workout_log + all strength_logs rows are
+   *  inserted in a single transaction — a failure to insert any strength row
+   *  rolls back the parent so the user doesn't end up with an empty
+   *  strength workout in their history. Ignored for non-strength types. */
+  strengthEntries?: StrengthEntryInput[];
   runSessionId?: string; // link to GPS run session if coming from active-run flow
 }): Promise<LogResult> {
   try {
@@ -47,14 +81,24 @@ export async function logManualWorkout(input: {
     const footPain = input.footPain;
     const notes = input.notes.trim();
 
-    // If this log came from the GPS tracker, pull distance + duration off the
-    // run_sessions row so the workout_logs row carries them too. Without this
-    // copy, the analytics queries (weekly distance, RPE × pace, daily active
-    // minutes) all sum nulls → display 0/empty. The `paceSecPerKm` and `rtl`
-    // columns are GENERATED from distance_km + duration_sec, so writing those
-    // two fields cascades automatically.
-    let runDistanceKm: string | undefined;
-    let runDurationSec: number | undefined;
+    // Defensive: reject unknown types (a bad client could otherwise insert
+    // a row that violates the CHECK constraint and 500s on the DB layer).
+    const type: WorkoutType =
+      input.type && WORKOUT_TYPES.includes(input.type) ? input.type : "run";
+
+    // Resolve distance + duration. Priority order:
+    //   1. Linked run_session (GPS authoritative)
+    //   2. Caller-supplied manual values (quick-log fields)
+    //   3. Null (no metrics — typical for strength/mobility/other)
+    //
+    // The `paceSecPerKm` and `rtl` columns are GENERATED on distance_km +
+    // duration_sec, so writing those two values cascades automatically. RTL
+    // is also gated on type='run' inside the generated expression, so
+    // non-run rows with distance entries (shouldn't happen via this UI but
+    // defensive against future callers) won't pollute analytics totals.
+    let resolvedDistanceKm: string | undefined;
+    let resolvedDurationSec: number | undefined;
+
     if (input.runSessionId) {
       try {
         const rs = await db.query.runSessions.findFirst({
@@ -66,28 +110,112 @@ export async function logManualWorkout(input: {
           // that was started but never moved (which would make RTL=0 noise in
           // the weekly distance chart).
           const dk = Number(rs.distanceKm);
-          if (Number.isFinite(dk) && dk > 0) runDistanceKm = rs.distanceKm;
-          if (rs.durationSec > 0) runDurationSec = rs.durationSec;
+          if (Number.isFinite(dk) && dk > 0) resolvedDistanceKm = rs.distanceKm;
+          if (rs.durationSec > 0) resolvedDurationSec = rs.durationSec;
         }
       } catch (e) {
         console.error("run_session lookup non-fatal:", e);
       }
     }
 
-    // 1. Insert workout log
-    const [log] = await db
-      .insert(workoutLogs)
-      .values({
-        userId: user.id,
-        performedAt: new Date(),
-        type: "run",
-        rpe,
-        footPain,
-        notesRaw: notes || null,
-        distanceKm: runDistanceKm,
-        durationSec: runDurationSec,
-      })
-      .returning();
+    // Manual quick-log values — only honoured for runs, and only when GPS
+    // didn't already supply them. The numeric column is `numeric(6, 2)` so
+    // we cap to 2 decimal places to stay within precision.
+    if (
+      type === "run" &&
+      resolvedDistanceKm === undefined &&
+      typeof input.distanceKm === "number" &&
+      Number.isFinite(input.distanceKm) &&
+      input.distanceKm > 0
+    ) {
+      resolvedDistanceKm = input.distanceKm.toFixed(2);
+    }
+    if (
+      type === "run" &&
+      resolvedDurationSec === undefined &&
+      typeof input.durationSec === "number" &&
+      Number.isFinite(input.durationSec) &&
+      input.durationSec > 0
+    ) {
+      resolvedDurationSec = Math.round(input.durationSec);
+    }
+
+    // ── Strength entries (Phase 8b.3) ────────────────────────────
+    // Sanitize + validate every entry up-front. Any invalid row aborts the
+    // whole insert (no partial strength workouts). Coerce string-typed
+    // numbers defensively in case a future caller forgets to.
+    const cleanStrengthEntries: StrengthEntryInput[] = [];
+    if (type === "strength" && Array.isArray(input.strengthEntries)) {
+      for (const raw of input.strengthEntries) {
+        const exercise = (raw?.exercise ?? "").trim();
+        const weightKg = Number(raw?.weightKg);
+        const reps = Number(raw?.reps);
+        const sets = Number(raw?.sets);
+        // Skip fully-empty rows silently (the UI seeds one blank row by default).
+        const isAllEmpty =
+          exercise === "" &&
+          (!Number.isFinite(weightKg) || weightKg === 0) &&
+          (!Number.isFinite(reps) || reps === 0);
+        if (isAllEmpty) continue;
+        // Anything partially filled but invalid is a user error — reject the
+        // entire submission so they can fix it before we persist a half-row.
+        if (
+          exercise === "" ||
+          !Number.isFinite(weightKg) || weightKg <= 0 ||
+          !Number.isFinite(reps) || reps < 1 ||
+          !Number.isFinite(sets) || sets < 1
+        ) {
+          return {
+            success: false,
+            error:
+              "Each strength entry needs a name, positive weight, reps ≥ 1, and sets ≥ 1.",
+          };
+        }
+        cleanStrengthEntries.push({
+          exercise,
+          // numeric(5,2) on weight, integer on reps/sets — round to match
+          weightKg: Math.round(weightKg * 100) / 100,
+          reps: Math.round(reps),
+          sets: Math.round(sets),
+        });
+      }
+    }
+
+    // 1. Insert workout log + (if strength) child strength_logs atomically.
+    //    A failure on any strength_logs insert rolls the whole thing back
+    //    so the user never sees a strength workout with zero exercises in
+    //    their history (would falsely tell the FSM "you did a strength
+    //    session" and pollute the Lift Progression chart with a gap).
+    const [log] = await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(workoutLogs)
+        .values({
+          userId: user.id,
+          performedAt: new Date(),
+          type,
+          rpe,
+          footPain,
+          notesRaw: notes || null,
+          distanceKm: resolvedDistanceKm,
+          durationSec: resolvedDurationSec,
+        })
+        .returning();
+
+      if (cleanStrengthEntries.length > 0) {
+        await tx.insert(strengthLogs).values(
+          cleanStrengthEntries.map((e) => ({
+            workoutLogId: inserted[0].id,
+            userId: user.id,
+            exercise: e.exercise,
+            weightKg: e.weightKg.toFixed(2),
+            reps: e.reps,
+            sets: e.sets,
+          })),
+        );
+      }
+
+      return inserted;
+    });
 
     // Link run session → workout log if this came from GPS run
     if (input.runSessionId) {
@@ -113,7 +241,21 @@ export async function logManualWorkout(input: {
 
     // 3. Extract feedback sentiment (non-fatal)
     try {
-      const fb = await extractFeedback({ notes, type: "run", rpe, footPain });
+      // Pass the resolved type (not the hardcoded "run" the original used) so
+      // Gemini's symptom/sentiment extraction can adapt prompts for strength
+      // vs cardio (e.g. "tweaked my shoulder" matters for strength, "calf
+      // tightness" matters for runs). extractFeedback's existing prompt
+      // already branches on `type`; this just stops feeding it a lie.
+      // Also forward distance/duration when present — extractFeedback uses
+      // them as additional grounding context in its prompt.
+      const fb = await extractFeedback({
+        notes,
+        type,
+        rpe,
+        footPain,
+        distanceKm: resolvedDistanceKm ? Number(resolvedDistanceKm) : null,
+        durationSec: resolvedDurationSec ?? null,
+      });
       await db.insert(feedbackSentiment).values({
         workoutLogId: log.id,
         overallSentiment: fb.data.overall_sentiment,
@@ -168,14 +310,32 @@ export async function logManualWorkout(input: {
       console.error("regenerateRoadmap non-fatal:", e);
     }
 
-    // 5. Gemini post-workout summary (non-fatal — workout is already saved)
+    // 5. Gemini post-workout summary (non-fatal — workout is already saved).
+    //    The summarizePostWorkout prompt is running-specific ("conservative
+    //    running coach assistant…"). For non-run types it produces off-topic
+    //    copy ("your run was…" for a strength session). Skip it for those
+    //    types — generic copy below is sufficient until the prompt is made
+    //    type-aware (see BACKLOG: type-aware post-workout summary).
     const recentRpe = recentRaw.map((l) => l.rpe).slice(0, 7);
-    let summary = "Workout logged! Keep monitoring your effort and pain levels.";
-    let adjustments = ["Stay consistent with your training schedule.", "Rest when your body needs it."];
+    let summary = type === "strength"
+      ? "Strength session logged. Track your lifts week-over-week in Analytics."
+      : type === "mobility"
+        ? "Mobility session logged. Consistent mobility work protects your training."
+        : type === "other"
+          ? "Workout logged."
+          : "Workout logged! Keep monitoring your effort and pain levels.";
+    let adjustments = type === "strength"
+      ? [
+          "Keep RPE in the 7-8 range for productive strength work.",
+          "If a lift feels off, drop the weight before dropping the rep.",
+        ]
+      : ["Stay consistent with your training schedule.", "Rest when your body needs it."];
     try {
-      const sumResult = await summarizePostWorkout({ rpe, footPain, notes, currentLevel, recentRpe });
-      summary = sumResult.summary;
-      adjustments = sumResult.adjustments;
+      if (type === "run") {
+        const sumResult = await summarizePostWorkout({ rpe, footPain, notes, currentLevel, recentRpe });
+        summary = sumResult.summary;
+        adjustments = sumResult.adjustments;
+      }
     } catch (e) {
       console.error("summarizePostWorkout non-fatal:", e);
     }

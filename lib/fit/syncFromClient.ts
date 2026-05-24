@@ -36,7 +36,7 @@ export type SyncResult =
   | { kind: "unsupported"; reason: "web" | "android-too-old" }
   | { kind: "not-installed" }
   | { kind: "needs-update" }
-  | { kind: "permission-denied" }
+  | { kind: "permission-denied"; missing: string[] }
   | { kind: "error"; message: string };
 
 /**
@@ -68,7 +68,7 @@ export async function syncHealthConnect(
   if (interactive) {
     const perms = await requestPermissions();
     if (!perms.allGranted) {
-      return { kind: "permission-denied" };
+      return { kind: "permission-denied", missing: perms.missing };
     }
   }
 

@@ -38,6 +38,10 @@ export type PermissionResult = {
    *  (currently just ExerciseSession) don't block this becoming true. */
   allGranted: boolean;
   granted: string[];
+  /** Subset of HEALTH_READ_REQUIRED that the plugin reports as NOT granted.
+   *  Empty when allGranted is true. Lets the UI tell the user exactly what to
+   *  re-enable in Health Connect's settings instead of a generic "denied". */
+  missing: string[];
   /** Subset of `granted` that lets us call readSessions(). When false,
    *  syncFromClient silently skips the ExerciseSession read instead of
    *  failing the whole sync. */
@@ -85,11 +89,20 @@ export type HealthReadType = (typeof HEALTH_READ_TYPES)[number];
 
 /** Minimal subset of the plugin's API surface we use. Typed loosely on
  *  purpose — the runtime shape is what matters; the plugin's .d.ts isn't
- *  imported (would defeat the no-static-import strategy). */
+ *  imported (would defeat the no-static-import strategy).
+ *
+ *  Phase 8b.2: `checkHealthPermissions` added so we can poll the current
+ *  granted state without re-triggering the system prompt. The kiwi-health
+ *  plugin (@0.0.40) returns both `grantedPermissions: string[]` and
+ *  `hasAllPermissions: boolean` from both methods — but `hasAllPermissions`
+ *  is the authoritative signal. The string-list matcher is a fallback for
+ *  plugin versions that don't include it. */
 type HealthConnectPluginApi = {
   checkAvailability(): Promise<{ availability: string }>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   requestHealthPermissions(opts: { read: string[]; write: string[] }): Promise<any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  checkHealthPermissions?: (opts: { read: string[]; write: string[] }) => Promise<any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readRecords(opts: any): Promise<{ records: any[] }>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -180,44 +193,183 @@ export async function checkAvailability(): Promise<HealthConnectAvailability> {
   }
 }
 
+/**
+ * Some Health Connect record-type names don't map 1:1 to their underlying
+ * Android permission string. ExerciseSession's permission is `READ_EXERCISE`
+ * (not `READ_EXERCISE_SESSION`), so the bare substring/normalize check
+ * fails for it. Anything not in this map normalizes by lowercasing + stripping
+ * non-alphanumerics, which works for every other type we currently use.
+ *
+ * Each value is a list of canonical normalized tokens — `isPermissionGranted`
+ * succeeds when any of them appears as a substring of the normalized granted
+ * permission string. Add aliases here as new types are introduced.
+ */
+const PERMISSION_ALIASES: Record<string, string[]> = {
+  ExerciseSession: ["exercisesession", "readexercise"],
+};
+
+/** Lowercase + strip non-alphanumerics so "READ_ACTIVE_CALORIES_BURNED",
+ *  "android.permission.health.READ_ACTIVE_CALORIES_BURNED", and
+ *  "ActiveCaloriesBurned" all collapse to "...activecaloriesburned" and
+ *  match cleanly. Previously the matcher used raw `.toLowerCase()` then
+ *  substring-checked the type name against the granted string, which broke
+ *  on underscore-separated qualified names: lowercased "ActiveCaloriesBurned"
+ *  ("activecaloriesburned") is NOT a substring of "read_active_calories_burned"
+ *  because the underscores break the run. The OS reported perms as granted
+ *  while AdaptiveFit reported "Permission denied" — exported here so the
+ *  unit test can pin the contract. */
+export function normalizePermissionString(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Returns true if `typeName` (e.g. "ActiveCaloriesBurned") is present in
+ *  `granted` (an array as returned by the plugin, in any of its known
+ *  shapes). Exported for unit tests so we can pin the matcher behavior
+ *  against fixture responses without standing up a fake plugin. */
+export function isPermissionGranted(typeName: string, granted: string[]): boolean {
+  const grantedNorm = granted.map(normalizePermissionString);
+  const aliases = PERMISSION_ALIASES[typeName] ?? [normalizePermissionString(typeName)];
+  return grantedNorm.some((g) => aliases.some((alias) => g.includes(alias)));
+}
+
+/**
+ * Compute a PermissionResult from a raw plugin response.
+ *
+ * Decision tree (most-trusted signal first):
+ *   1. If response has `hasAllPermissions: boolean` (kiwi-health ≥ 0.0.40,
+ *      and the plugin's documented contract), trust it. Build `missing`
+ *      via the string matcher for diagnostic naming.
+ *   2. Otherwise, fall back to the string matcher against whatever shape
+ *      of granted-list the plugin chose.
+ *
+ * The 8b.1 fix matched strings on the type names directly, which failed
+ * when the plugin returned underscore-separated qualified strings. The
+ * 8b.2 fix (this one) reads `hasAllPermissions` directly instead — the
+ * plugin already knows the answer; we shouldn't be re-deriving it from
+ * fragile string comparison.
+ *
+ * Exported so unit tests can pin both paths without a fake plugin.
+ */
+export function buildPermissionResult(
+  res: unknown,
+): { granted: string[]; allGranted: boolean; missing: string[]; hasExerciseSession: boolean } {
+  // Normalize the granted-list across the shapes different plugin
+  // versions have returned in the wild. Guard against null/non-object —
+  // the bridge can return raw null on a JNI-level error before the
+  // promise rejects, and a string response would otherwise blow up on
+  // the destructure below.
+  const r = (res && typeof res === "object" ? res : {}) as {
+    grantedPermissions?: unknown;
+    readPermissions?: unknown;
+    granted?: unknown;
+    permissions?: unknown;
+    hasAllPermissions?: unknown;
+  };
+  const granted: string[] = Array.isArray(r.grantedPermissions)
+    ? (r.grantedPermissions as string[])
+    : Array.isArray(r.readPermissions)
+      ? (r.readPermissions as string[])
+      : Array.isArray(r.granted)
+        ? (r.granted as string[])
+        : Array.isArray(r.permissions)
+          ? (r.permissions as string[])
+          : [];
+
+  const matcherMissing = HEALTH_READ_REQUIRED.filter(
+    (t) => !isPermissionGranted(t, granted),
+  );
+
+  // Prefer the plugin's authoritative boolean when present — string
+  // matching is only used to NAME the missing types for the UI banner.
+  const hasAllPermissionsFlag =
+    typeof r.hasAllPermissions === "boolean" ? r.hasAllPermissions : null;
+  const requiredGranted =
+    hasAllPermissionsFlag !== null
+      ? hasAllPermissionsFlag
+      : matcherMissing.length === 0;
+
+  // Harmonize `missing` with `allGranted`. The matcher might list types as
+  // missing when the plugin authoritatively says everything is granted
+  // (the "no requestable permission" case where grantedPermissions comes
+  // back empty). Trust the plugin in that case; `missing` must be empty
+  // whenever `allGranted` is true, or the UI lies to the user.
+  const missing = requiredGranted ? [] : matcherMissing;
+
+  // The plugin's hasAllPermissions covers *both* read + write of every
+  // type we passed. If it says true, all our reads (incl. ExerciseSession
+  // if we asked for it) are granted; we can shortcut the per-type check
+  // for that flag. Otherwise fall back to the matcher.
+  const hasExerciseSession =
+    requiredGranted ||
+    isPermissionGranted("ExerciseSession", granted);
+
+  return { granted, allGranted: requiredGranted, missing, hasExerciseSession };
+}
+
 export async function requestPermissions(): Promise<PermissionResult> {
   const plugin = getPlugin();
-  if (!plugin) return { allGranted: false, granted: [], hasExerciseSession: false };
+  if (!plugin) {
+    return { allGranted: false, granted: [], missing: [...HEALTH_READ_REQUIRED], hasExerciseSession: false };
+  }
   try {
-    const res = await plugin.requestHealthPermissions({
+    const reqRes = await plugin.requestHealthPermissions({
       read: [...HEALTH_READ_TYPES],
       write: [],
     });
-    // Different plugin versions return different shapes. Normalize.
-    const granted: string[] =
-      res?.grantedPermissions ??
-      res?.readPermissions ??
-      res?.granted ??
-      [];
 
-    // ── Required check ─────────────────────────────────────────────
-    // The plugin sometimes returns short type names ("Steps") and sometimes
-    // fully-qualified permission strings ("android.permission.health.READ_STEPS").
-    // Match permissively — substring check works for both shapes and is
-    // forward-compatible with future plugin versions.
-    const grantedLower = granted.map((g) => g.toLowerCase());
-    const isGranted = (typeName: string): boolean => {
-      const lower = typeName.toLowerCase();
-      return grantedLower.some((g) => g.includes(lower));
-    };
+    let result = buildPermissionResult(reqRes);
 
-    const requiredGranted = HEALTH_READ_REQUIRED.every(isGranted);
-    const hasExerciseSession = isGranted("ExerciseSession");
+    // ── Fallback probe for the "No requestable permission in the request"
+    //    case ─────────────────────────────────────────────────────────
+    // When all permissions are already granted at the OS level, Health
+    // Connect skips the permission UI entirely and the plugin's
+    // requestHealthPermissions returns with an empty grantedPermissions
+    // array (because nothing was newly granted in *this* call). Plugin
+    // versions ≥ 0.0.40 do set hasAllPermissions:true in that case, but
+    // older or forked builds may not. So if the request looked empty AND
+    // we still report missing perms, ask checkHealthPermissions for the
+    // authoritative current state. Non-fatal if the method isn't present.
+    const requestLookedEmpty =
+      result.granted.length === 0 && !result.allGranted;
+    if (requestLookedEmpty && typeof plugin.checkHealthPermissions === "function") {
+      try {
+        const checkRes = await plugin.checkHealthPermissions({
+          read: [...HEALTH_READ_TYPES],
+          write: [],
+        });
+        const fallback = buildPermissionResult(checkRes);
+        // Only adopt the fallback if it strictly improves on the request
+        // result — guards against a broken checkHealthPermissions
+        // pessimising a correctly-true request response.
+        if (fallback.allGranted || fallback.granted.length > result.granted.length) {
+          result = fallback;
+        }
+      } catch (e) {
+        console.warn("[healthConnect] checkHealthPermissions fallback failed:", e);
+      }
+    }
 
-    // Fall back to plugin's own hasAllPermissions only when it's clearly
-    // talking about the SAME set we requested (i.e. all 5). If only some
-    // are missing, we'd rather trust our explicit per-type check.
-    const allGranted: boolean = requiredGranted;
+    // Diagnostic log — silent on the happy path. Shows the raw plugin
+    // response shape in adb logcat when the result is still negative so
+    // we can extend the fallback chain if a new plugin variant appears.
+    if (!result.allGranted) {
+      console.warn(
+        "[healthConnect] requestPermissions: still missing after fallback probe",
+        {
+          missing: result.missing,
+          granted: result.granted,
+          requestResponseKeys:
+            reqRes && typeof reqRes === "object" ? Object.keys(reqRes) : null,
+          requestHasAllPermissions:
+            (reqRes as { hasAllPermissions?: unknown })?.hasAllPermissions,
+        },
+      );
+    }
 
-    return { allGranted, granted, hasExerciseSession };
+    return result;
   } catch (e) {
     console.warn("[healthConnect] requestPermissions failed:", e);
-    return { allGranted: false, granted: [], hasExerciseSession: false };
+    return { allGranted: false, granted: [], missing: [...HEALTH_READ_REQUIRED], hasExerciseSession: false };
   }
 }
 
