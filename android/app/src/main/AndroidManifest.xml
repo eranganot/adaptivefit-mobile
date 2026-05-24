@@ -98,15 +98,20 @@
     <uses-permission android:name="android.permission.health.READ_DISTANCE" />
     <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED" />
     <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />
-    <!-- READ_EXERCISE temporarily removed (Phase 8b.1): kiwi-health plugin    -->
-    <!-- v0.0.40's RecordTypeRegistry doesn't include ExerciseSession, so      -->
-    <!-- attempting to read it crashes the native bridge → "AdaptiveFit       -->
-    <!-- keeps stopping" loop on every app open. Re-add this permission        -->
-    <!-- alongside flipping HEALTH_READ_OPTIONAL in lib/fit/healthConnect.ts   -->
-    <!-- once we patch / replace the plugin.                                   -->
+    <!-- READ_EXERCISE re-added in Phase 8b.5. The earlier 8b.1 revert was      -->
+    <!-- pre-emptive — the kiwi-health plugin v0.0.40 DOES register             -->
+    <!-- ExerciseSession in its RecordTypeRegistry (line 22 of                  -->
+    <!-- RecordTypeRegistry.kt). The 8b.1 crash was likely a different issue   -->
+    <!-- that's since been fixed by Health Connect platform updates over the   -->
+    <!-- last 18 months. Without this manifest entry, HC's permission Activity -->
+    <!-- silently skips ExerciseSession (returns "No requestable permission   -->
+    <!-- in the request") because Android requires every HC permission to be  -->
+    <!-- declared statically — even if the plugin sends it in the request,    -->
+    <!-- HC checks the manifest before prompting.                              -->
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
     <!--                                                                       -->
-    <!-- READ_HEART_RATE remains out for the same reason (plugin doesn't       -->
-    <!-- register HeartRate either). Revisits in Phase 8b.6.                  -->
+    <!-- READ_HEART_RATE remains out (plugin's RecordTypeRegistry doesn't      -->
+    <!-- include HeartRate). Revisits in Phase 8b.6 if we fork the plugin.    -->
 
     <!-- Health Connect's package-visibility query (Android 11+). Without  -->
     <!-- this, our app can't even detect whether Health Connect is        -->
