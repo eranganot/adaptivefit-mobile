@@ -63,13 +63,16 @@ export async function syncHealthConnect(
     return { kind: "needs-update" };
   }
 
-  // Health Connect is installed. Request permissions.
-  // The plugin will only prompt if we don't already have them.
-  if (interactive) {
-    const perms = await requestPermissions();
-    if (!perms.allGranted) {
-      return { kind: "permission-denied", missing: perms.missing };
-    }
+  // Health Connect is installed. Always check permissions, even on a
+  // background sync — without it we don't know whether ExerciseSession is
+  // granted, and we MUST NOT call readSessions() without that knowledge
+  // (the kiwi-health plugin's denied-perm path can crash the bridge at JNI
+  // with no JS-recoverable signal). Non-interactive callers skip the
+  // "permission-denied" return path so they don't trigger UI noise — they
+  // just don't get sessions if perms are partial.
+  const perms = await requestPermissions();
+  if (interactive && !perms.allGranted) {
+    return { kind: "permission-denied", missing: perms.missing };
   }
 
   // ── Read daily aggregates (hard requirement) ─────────────────────
@@ -84,13 +87,16 @@ export async function syncHealthConnect(
   }
 
   // ── Read ExerciseSessions (best effort, Phase 8b) ────────────────
-  // We don't fail the whole sync if sessions fail — daily aggregates are
-  // still worth shipping. Sessions are mostly a bonus signal (gym workouts,
-  // walks recorded by the watch) and a plugin hiccup here shouldn't black
-  // out the Home "Yesterday" widget.
+  // Gated on the permission flag from the probe above. Even with the gate,
+  // wrap in try/catch — the plugin may still throw on the bridge call for
+  // reasons unrelated to permissions (e.g. an unknown sub-type returned
+  // by a niche source app). Failures here log + skip; daily aggregates
+  // still ship.
   let sessions: Awaited<ReturnType<typeof readSessions>> = [];
   try {
-    sessions = await readSessions(daysBack);
+    sessions = await readSessions(daysBack, {
+      hasExerciseSessionPermission: perms.hasExerciseSession,
+    });
   } catch (e) {
     console.warn("[syncHealthConnect] readSessions failed (non-fatal):", e);
   }

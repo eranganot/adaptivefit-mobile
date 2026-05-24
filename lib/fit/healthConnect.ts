@@ -54,17 +54,19 @@ export type PermissionResult = {
 // throws IllegalArgumentException on first encounter, killing the process
 // at the JNI layer, which JS try/catch CANNOT recover from).
 //
-// HeartRate is still skipped in 8b — plugin v0.0.40 doesn't register it.
+// HeartRate is still skipped — plugin v0.0.40 doesn't register it.
 //
-// ExerciseSession was added then immediately reverted (Phase 8b.1): the same
-// plugin version also lacks it in its RecordTypeRegistry, and including it
-// in the read array caused a native crash on app open via the auto-sync
-// flow. Re-enable when:
-//   - we fork/patch the plugin to register ExerciseSession + HeartRate, OR
-//   - the plugin upstream cuts a release that includes them.
-// All the downstream infra (fit_sessions.source_app column, readSessions()
-// function, syncHealthConnectData sessions[] handling) stays in place so
-// re-enabling is a one-line change to the array below.
+// ExerciseSession (Phase 8b.5 — re-enabling attempt): originally added in 8b
+// then immediately reverted in 8b.1 because the kiwi-health plugin crashed
+// on the read. Health Connect has shipped ~18 months of updates since then
+// and is now stable on the Android platform. We're re-flipping the gate to
+// see whether the original crash still reproduces. The downstream infra
+// (fit_sessions.source_app column, readSessions() function,
+// syncHealthConnectData sessions[] handling) is all already in place — it's
+// been waiting for this one line. If it crashes again, revert by moving
+// "ExerciseSession" back into the commented block; everything else stays.
+// Watch adb logcat for `IllegalArgumentException` or `Unknown record type`
+// after deploying.
 const HEALTH_READ_REQUIRED = [
   "Steps",
   "Distance",
@@ -73,7 +75,7 @@ const HEALTH_READ_REQUIRED = [
 ] as const;
 
 const HEALTH_READ_OPTIONAL: readonly string[] = [
-  // "ExerciseSession",  // see comment above
+  "ExerciseSession",
 ] as const;
 
 export const HEALTH_READ_TYPES = [
@@ -279,13 +281,26 @@ export function buildPermissionResult(
     (t) => !isPermissionGranted(t, granted),
   );
 
-  // Prefer the plugin's authoritative boolean when present — string
-  // matching is only used to NAME the missing types for the UI banner.
+  // Resolve `requiredGranted` with care:
+  //
+  // - The plugin's `hasAllPermissions` boolean covers EVERY type we passed
+  //   in the request (required + optional). With Phase 8b.5 we ask for
+  //   `ExerciseSession` as an optional type; a user who denies ONLY
+  //   ExerciseSession will see `hasAllPermissions: false` even though all
+  //   four required types are granted. Trusting that boolean directly
+  //   would falsely report "Permission denied" and break the daily sync
+  //   path purely because the optional perm wasn't granted.
+  //
+  // - So: trust `hasAllPermissions === true` as a positive signal (faster
+  //   than walking the matcher, and authoritative), but on `false` fall
+  //   back to the matcher checking REQUIRED only. The matcher is solid for
+  //   our 4 required types — covered by tests pinning both short and
+  //   fully-qualified Android permission strings.
   const hasAllPermissionsFlag =
     typeof r.hasAllPermissions === "boolean" ? r.hasAllPermissions : null;
   const requiredGranted =
-    hasAllPermissionsFlag !== null
-      ? hasAllPermissionsFlag
+    hasAllPermissionsFlag === true
+      ? true
       : matcherMissing.length === 0;
 
   // Harmonize `missing` with `allGranted`. The matcher might list types as
@@ -295,13 +310,17 @@ export function buildPermissionResult(
   // whenever `allGranted` is true, or the UI lies to the user.
   const missing = requiredGranted ? [] : matcherMissing;
 
-  // The plugin's hasAllPermissions covers *both* read + write of every
-  // type we passed. If it says true, all our reads (incl. ExerciseSession
-  // if we asked for it) are granted; we can shortcut the per-type check
-  // for that flag. Otherwise fall back to the matcher.
+  // hasExerciseSession is a per-type signal — must NOT shortcut on
+  // requiredGranted (which now refers only to the 4 REQUIRED types after
+  // the 8b.5 fix above). If REQUIRED are granted but ExerciseSession was
+  // declined, requiredGranted is true while ExerciseSession is genuinely
+  // missing, and we'd otherwise falsely report it as granted → causing
+  // readSessions() to try the bridge call and crash. Shortcut only on the
+  // plugin's authoritative hasAllPermissions=true (which IS per-everything).
   const hasExerciseSession =
-    requiredGranted ||
-    isPermissionGranted("ExerciseSession", granted);
+    hasAllPermissionsFlag === true
+      ? true
+      : isPermissionGranted("ExerciseSession", granted);
 
   return { granted, allGranted: requiredGranted, missing, hasExerciseSession };
 }
@@ -560,20 +579,25 @@ function numericField(rec: unknown, key: string): number {
  */
 export async function readSessions(
   daysBack: number,
+  options: { hasExerciseSessionPermission?: boolean } = {},
 ): Promise<FitSessionSummary[]> {
-  // ── Feature gate ──────────────────────────────────────────────
-  // If "ExerciseSession" isn't in HEALTH_READ_TYPES, the plugin won't
-  // have asked for the permission and likely doesn't recognise the type
-  // at all (kiwi-health v0.0.40 doesn't register it). Hitting the bridge
-  // anyway can throw at the Kotlin JNI layer, which propagates as a
-  // native crash that JS try/catch CANNOT recover from. The auto-sync
-  // on app open hit exactly this and produced the "AdaptiveFit keeps
-  // stopping" loop. So we bail out BEFORE touching the bridge.
-  //
-  // Re-enable by adding "ExerciseSession" back to HEALTH_READ_OPTIONAL
-  // — the feature gate above does all the conditionalisation.
+  // ── Feature gate (twofold) ────────────────────────────────────
+  // 1. If "ExerciseSession" isn't even in HEALTH_READ_TYPES, the plugin
+  //    won't have asked for the permission and likely doesn't recognise
+  //    the type at all (kiwi-health v0.0.40 didn't register it back when
+  //    8b.1 was reverted). Hitting the bridge anyway can throw at the
+  //    Kotlin JNI layer, which propagates as a native crash that JS
+  //    try/catch CANNOT recover from — that's how the "AdaptiveFit keeps
+  //    stopping" loop happened.
+  // 2. If the user explicitly denied the ExerciseSession permission while
+  //    granting the required ones, we still shouldn't call the bridge —
+  //    same JNI-crash risk. The caller passes `hasExerciseSessionPermission`
+  //    from the permission probe. Default `true` for back-compat with
+  //    callers that don't know to check (the legacy contract was "if it's
+  //    in HEALTH_READ_TYPES, just try").
   const enabled = (HEALTH_READ_TYPES as readonly string[]).includes("ExerciseSession");
   if (!enabled) return [];
+  if (options.hasExerciseSessionPermission === false) return [];
 
   const plugin = getPlugin();
   if (!plugin) return [];

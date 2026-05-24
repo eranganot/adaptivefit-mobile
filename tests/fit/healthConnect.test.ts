@@ -148,12 +148,38 @@ describe("buildPermissionResult — trusts hasAllPermissions when present", () =
   });
 
   it("hasAllPermissions:false with empty granted → allGranted:false", () => {
+    // hasAllPermissions:false alone isn't authoritative anymore (since
+    // Phase 8b.5 — optional ExerciseSession can flip it false without
+    // affecting REQUIRED). But with empty granted, the matcher also
+    // reports all required missing, so the outcome stands.
     const r = buildPermissionResult({
       grantedPermissions: [],
       hasAllPermissions: false,
     });
     expect(r.allGranted).toBe(false);
     expect(r.missing.length).toBeGreaterThan(0);
+  });
+
+  it("hasAllPermissions:false but all REQUIRED granted → allGranted:true (8b.5)", () => {
+    // The case that motivated the buildPermissionResult fix in 8b.5:
+    // user grants the 4 required perms but denies optional ExerciseSession.
+    // Plugin returns hasAllPermissions:false because not every requested
+    // type was granted. We must still report allGranted:true so the daily
+    // sync isn't gated on an optional perm.
+    const r = buildPermissionResult({
+      grantedPermissions: [
+        "android.permission.health.READ_STEPS",
+        "android.permission.health.READ_DISTANCE",
+        "android.permission.health.READ_ACTIVE_CALORIES_BURNED",
+        "android.permission.health.READ_TOTAL_CALORIES_BURNED",
+      ],
+      hasAllPermissions: false,
+    });
+    expect(r.allGranted).toBe(true);
+    expect(r.missing).toEqual([]);
+    // ExerciseSession was NOT granted (not in the list) — the optional flag
+    // should reflect that.
+    expect(r.hasExerciseSession).toBe(false);
   });
 
   it("hasAllPermissions:true overrides what string-matching would conclude", () => {
