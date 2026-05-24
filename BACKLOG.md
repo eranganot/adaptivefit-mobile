@@ -5,111 +5,37 @@ becomes painful first.
 
 ---
 
-## HC "Permission denied" false-negative — UNRESOLVED after multiple attempts
+## HC "Permission denied" false-negative — RESOLVED 2026-05-24
 
-**Symptom (confirmed on device 2026-05-24):** All 4 required permissions
-(Steps, Distance, ActiveCaloriesBurned, TotalCaloriesBurned) are granted at
-the OS level — verified via Health Connect's App Access screen — yet
-AdaptiveFit's Settings page shows "Permission denied. Grant data access in
-Health Connect settings." every time the user taps Sync now.
+**Outcome:** Fixed. Verified on device after Railway deploy — Sync now
+reports "Synced — 31 days updated" with all 4 required perms granted.
 
-**Logcat fingerprint** (Pixel 9, Android 16, API 36):
-```
-V Capacitor: requestHealthPermissions called with read=[Steps,Distance,
-             ActiveCaloriesBurned,TotalCaloriesBurned]
-V Activity: No requestable permission in the request.
-D Capacitor: Unable to find a Capacitor plugin to handle permission
-             requestCode, trying Cordova plugins ...
-E Capacitor: Couldn't save last HealthConnect's Plugin
-             requestHealthPermissions call
-I chromium: [INFO:CONSOLE:76] "Uncaught (in promise) TypeError: Failed
-             to execute 'clone' on 'Response': Response body is already
-             used", source: .../sw.js (76)
-```
-Note the recurring `sw.js` "Response body is already used" error — service
-worker is mid-flight when the HC callback returns. Possible link.
+**Root cause (the real one):** Mostly a deployment confusion. The fixes
+landed in the code but `pnpm cap:sync` + Gradle APK rebuild only refresh
+the native shell — the JS bundle is served from Railway (`capacitor.config.ts`
+points `server.url` at the Railway URL). Until the code was committed,
+pushed, and Railway redeployed, the WebView kept loading the old bundle.
 
-**What we tried (all in code, all verified by unit tests, all still fail
-on device):**
+**The actual code fix that did the work:** `buildPermissionResult()` in
+`lib/fit/healthConnect.ts` now reads `hasAllPermissions: boolean` directly
+from the plugin response (the kiwi-health `.d.ts` documents this as the
+authoritative signal). String-matching is kept as a fallback for older
+plugin shapes but isn't the primary path. This handles the "No requestable
+permission in the request" case — when all perms are already granted at
+the OS level, the plugin's `requestHealthPermissions` returns with empty
+`grantedPermissions` but `hasAllPermissions: true`. Earlier matcher-only
+logic saw the empty array and reported "denied".
 
-1. **String-matcher normalization** — fixed `lib/fit/healthConnect.ts`
-   to strip non-alphanumerics so `ActiveCaloriesBurned` matches
-   `android.permission.health.READ_ACTIVE_CALORIES_BURNED`. Tests in
-   `tests/fit/healthConnect.test.ts` cover both shapes. ✓ unit-passes,
-   ✗ on-device.
-
-2. **Read `hasAllPermissions` directly** from the plugin response (the
-   plugin's `.d.ts` documents it as the authoritative signal). Added a
-   `buildPermissionResult()` helper that prefers the boolean flag and
-   falls back to string matching only when absent. ✓ unit-passes,
-   ✗ on-device.
-
-3. **Fallback to `plugin.checkHealthPermissions()`** when
-   `requestHealthPermissions` returns empty (the "no requestable
-   permission" path). Adopt the check-result only if it strictly
-   improves on the request-result. ✓ unit-passes, ✗ on-device.
-
-4. **Harmonize `missing` with `allGranted`** so the banner can't claim
-   "missing: Steps, Distance" when the plugin reports everything as
-   granted. ✓ unit-passes, ✗ on-device.
-
-5. **UI**: switched the banner from auto-redirect to explicit Settings-
-   button guidance, named the missing types. Banner still shows because
-   the underlying `allGranted: false` resolution hasn't changed
-   on-device.
-
-**Hypotheses for what's actually wrong (try in order next attempt):**
-
-a) **Service-worker caching** — the production app is served from
-   `adaptivefit-mobile-production.up.railway.app` and registers an
-   `sw.js`. The new client-side JS (with the fix) may never be loaded
-   because the SW is serving the old bundle. Verify by: bumping the SW
-   cache version / forcing skipWaiting, or rebuilding with a new
-   Next.js asset hash and confirming `__hcPluginLogged` console log
-   shows the *new* response keys.
-
-b) **API 36 / Android 16 incompatibility** — the kiwi-health plugin
-   v0.0.40 was last published before Android 16 stable. Its
-   `onRequestPermissionsResult` handler may not register cleanly on
-   API 36 — note the `Unable to find a Capacitor plugin to handle
-   permission requestCode` log line. The callback is getting lost
-   between Health Connect's permission activity and Capacitor's
-   bridge. Try: upgrade Capacitor to v7 (currently v6 per
-   package.json), bump kiwi-health to a fork that targets API 36, or
-   switch plugins entirely (`@capacitor-community/health` candidate).
-
-c) **The actual response shape we never see** — neither
-   `hasAllPermissions` nor `grantedPermissions` may be populated on
-   the API 36 path. The diagnostic warn-log added in attempt (3)
-   would surface the actual response keys if the new JS bundle ever
-   loaded (gated by hypothesis a). Capture `adb logcat | grep
-   healthConnect` AFTER confirming the cache is busted.
-
-d) **Capacitor v6 permission bridge bug** — the
-   `Couldn't save last HealthConnect's Plugin requestHealthPermissions
-   call` line suggests Capacitor's permission-result restoration is
-   failing. Filed in Capacitor's issue tracker as #6918 historically;
-   may need a Capacitor patch or a different permission-request
-   strategy (e.g. don't suspend the app between request and result).
-
-**Recovery path when picking this back up:**
-1. First confirm the SW isn't serving stale JS — bump cache version,
-   uninstall+reinstall the app, OR set the app to dev mode with SW
-   disabled. Verify by adding a console.log inside `requestPermissions`
-   with a unique string and watching for it in logcat.
-2. Then re-run Sync and capture the actual `requestResponseKeys` and
-   `requestHasAllPermissions` values from the diagnostic warn-log.
-3. If those are populated as expected → the on-device fix is now live
-   and the bug is one we already addressed (just wasn't deployed).
-4. If they're empty/absent → that's the real bug and we need
-   hypothesis (b) or (c).
-
-**Why we're putting this down for now:** Daily aggregate data still
-syncs successfully when the user manually grants perms via the system
-settings deep-link (which we kept working). The "Permission denied"
-banner is wrong but the data path beneath it isn't blocked for active
-use. Higher-leverage user-facing work (strength logging, manual
-workout types) is unblocked and proceeds first.
+**Lessons (kept here so we don't repeat them):**
+- AdaptiveFit's APK is a thin shell. Client-side fixes need `git push`
+  to Railway — not a Capacitor sync — to reach the device.
+- The `sw.js` (`Response body is already used`) console errors are
+  unrelated to HC and predate this work. Logging them for context but
+  not chasing them as part of HC investigation.
+- The `Unable to find a Capacitor plugin to handle permission requestCode`
+  log line is normal for the kiwi-health flow (it routes through
+  Health Connect's intent rather than Android's runtime perms) — not a
+  bug indicator.
 
 ---
 

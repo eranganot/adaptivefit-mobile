@@ -265,6 +265,45 @@ export async function logManualWorkout(input: {
         aiSummaryHe: fb.data.ai_summary_he,
         geminiModel: fb.modelUsed,
       });
+
+      // Phase 8b.4 — chat-extracted distance / duration back-fill.
+      //
+      // Only for runs, and only when the user left the field blank at insert
+      // time (`resolvedDistanceKm === undefined` / `resolvedDurationSec ===
+      // undefined`). If they typed a value or it came from a linked GPS run,
+      // their value is authoritative and we must never overwrite it — that
+      // would silently corrupt analytics totals. The prompt is also instructed
+      // to return null when a value was already passed as context, providing
+      // a second layer of defence.
+      //
+      // The paceSecPerKm + rtl columns are GENERATED ALWAYS on
+      // distance_km + duration_sec, so an UPDATE here cascades to them
+      // automatically.
+      if (type === "run") {
+        const xKm = fb.data.extracted_distance_km;
+        const xSec = fb.data.extracted_duration_sec;
+        const backfill: Partial<{ distanceKm: string; durationSec: number }> = {};
+        if (resolvedDistanceKm === undefined && xKm != null && xKm > 0) {
+          backfill.distanceKm = xKm.toFixed(2);
+        }
+        if (resolvedDurationSec === undefined && xSec != null && xSec > 0) {
+          backfill.durationSec = Math.round(xSec);
+        }
+        if (Object.keys(backfill).length > 0) {
+          try {
+            await db
+              .update(workoutLogs)
+              .set(backfill)
+              .where(eq(workoutLogs.id, log.id));
+            console.info("[logManualWorkout] back-filled from chat extraction:", {
+              workoutLogId: log.id,
+              backfill,
+            });
+          } catch (e) {
+            console.error("chat back-fill non-fatal:", e);
+          }
+        }
+      }
     } catch (e) {
       console.error("extractFeedback non-fatal:", e);
     }

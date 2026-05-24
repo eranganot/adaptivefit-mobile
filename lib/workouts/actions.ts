@@ -60,11 +60,16 @@ export async function updateWorkout(
         // Delete old sentiment row then re-insert
         await db.delete(feedbackSentiment).where(eq(feedbackSentiment.workoutLogId, id));
 
+        // Pass the existing distance/duration as context so the model knows
+        // not to re-extract them (the prompt is instructed to return null
+        // when authoritative values already exist).
         const fb = await extractFeedback({
           notes: validated.notes,
           type: existing.type,
           rpe: validated.rpe,
           footPain: validated.footPain,
+          distanceKm: existing.distanceKm ? Number(existing.distanceKm) : null,
+          durationSec: existing.durationSec ?? null,
         });
         await db.insert(feedbackSentiment).values({
           workoutLogId: id,
@@ -75,6 +80,33 @@ export async function updateWorkout(
           aiSummaryHe: fb.data.ai_summary_he,
           geminiModel: fb.modelUsed,
         });
+
+        // Phase 8b.4 — back-fill distance/duration on edit, same rules as
+        // logManualWorkout: only when the field is currently null and only
+        // for runs. The user editing notes to add "ran 7k in 45 min" after
+        // forgetting at log time should hydrate the metrics retroactively
+        // — but if they typed a value earlier we still leave it alone.
+        if (existing.type === "run") {
+          const xKm = fb.data.extracted_distance_km;
+          const xSec = fb.data.extracted_duration_sec;
+          const backfill: Partial<{ distanceKm: string; durationSec: number }> = {};
+          if (existing.distanceKm == null && xKm != null && xKm > 0) {
+            backfill.distanceKm = xKm.toFixed(2);
+          }
+          if (existing.durationSec == null && xSec != null && xSec > 0) {
+            backfill.durationSec = Math.round(xSec);
+          }
+          if (Object.keys(backfill).length > 0) {
+            await db
+              .update(workoutLogs)
+              .set(backfill)
+              .where(and(eq(workoutLogs.id, id), eq(workoutLogs.userId, user.id)));
+            console.info("[updateWorkout] back-filled from chat extraction:", {
+              workoutLogId: id,
+              backfill,
+            });
+          }
+        }
       } catch (e) {
         console.error("[updateWorkout] extractFeedback non-fatal:", e);
       }
