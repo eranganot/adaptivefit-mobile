@@ -185,6 +185,10 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       .limit(200),
 
     // ── A3: Daily activity — last 28 days (activeMin + avgRpe per day) ────
+    // Pulls from workout_logs ONLY: in-app GPS runs + manual logs. The
+    // fit_daily_metrics.active_minutes column (populated by the Phase 8b
+    // session-duration derivation from external app sessions like Strava
+    // or Samsung Health) is combined in a second query below.
     db
       .select({
         day: sql<string>`DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem')::text`,
@@ -196,6 +200,31 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       .groupBy(sql`DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem')`)
       .orderBy(asc(sql`DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem')`)),
   ]);
+
+  // ── A3 supplement: pull per-day active_minutes from fit_daily_metrics
+  //     (external ExerciseSession durations, derived in syncHealthConnectData).
+  //
+  // Kept as a separate query so the JOIN doesn't complicate the GROUP BY
+  // on the workout_logs query. Merged into dailyActivity below.
+  //
+  // Date semantics: fit_daily_metrics.date is YYYY-MM-DD UTC (matches the
+  // way readDailyMetrics buckets the data). The workout_logs query uses
+  // Asia/Jerusalem local date. Small mismatch at the day boundary in TZs
+  // east of UTC — for Israel (UTC+2/+3) a midnight UTC session lands in
+  // the right local day for any reasonable workout time, so we don't
+  // convert. If this ever needs to be exact, add an AT TIME ZONE cast.
+  const fitDailyForActivity = await db
+    .select({
+      day: sql<string>`${fitDailyMetrics.date}::text`,
+      activeMinutes: fitDailyMetrics.activeMinutes,
+    })
+    .from(fitDailyMetrics)
+    .where(
+      and(
+        eq(fitDailyMetrics.userId, user.id),
+        gte(fitDailyMetrics.date, sql`(CURRENT_DATE - INTERVAL '28 days')`),
+      ),
+    );
 
   // Shape weekly buckets — exact Sunday-key matching, no fuzzy window
   // SQL returns "YYYY-MM-DD" strings (Sunday dates in Israel timezone)
@@ -292,16 +321,44 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   }
   const liftHistory: LiftPoint[] = Array.from(liftMap.values());
 
-  // Shape daily activity points
-  const dailyActivity: DailyActivityPoint[] = dailyActivityRaw.map((r) => ({
-    day: new Date(r.day + "T12:00:00").toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "short",
-      timeZone: "Asia/Jerusalem",
-    }),
-    activeMin: Number(r.activeMin),
-    avgRpe: Number(r.avgRpe),
-  }));
+  // Shape daily activity points.
+  //
+  // Merge two sources keyed on YYYY-MM-DD:
+  //   1. workout_logs → activeMin (already in minutes) + avgRpe
+  //   2. fit_daily_metrics → activeMinutes from external HC sessions
+  //
+  // Days present in only one source get the other component as 0/null.
+  // No double-counting because in-app GPS runs live in workout_logs only
+  // (see readSessions docstring — we deliberately skip importing AF's own
+  // runs from HC). External-only days (e.g. you ran on Strava but didn't
+  // log in AdaptiveFit) will show active time but avgRpe = 0.
+  const fitMinByDay = new Map<string, number>();
+  for (const row of fitDailyForActivity) {
+    if (row.activeMinutes != null && row.activeMinutes > 0) {
+      fitMinByDay.set(row.day, row.activeMinutes);
+    }
+  }
+  const allDays = new Set<string>([
+    ...dailyActivityRaw.map((r) => r.day),
+    ...fitMinByDay.keys(),
+  ]);
+  const dailyByKey = new Map(dailyActivityRaw.map((r) => [r.day, r]));
+  const mergedDays = Array.from(allDays).sort();
+  const dailyActivity: DailyActivityPoint[] = mergedDays.map((dayKey) => {
+    const wl = dailyByKey.get(dayKey);
+    const wlMin = wl ? Number(wl.activeMin) : 0;
+    const fitMin = fitMinByDay.get(dayKey) ?? 0;
+    const total = Math.round((wlMin + fitMin) * 10) / 10;
+    return {
+      day: new Date(dayKey + "T12:00:00").toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        timeZone: "Asia/Jerusalem",
+      }),
+      activeMin: total,
+      avgRpe: wl ? Number(wl.avgRpe) : 0,
+    };
+  });
 
   return {
     weekly,

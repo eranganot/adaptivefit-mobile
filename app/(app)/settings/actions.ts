@@ -345,6 +345,10 @@ export async function syncHealthConnectData(
 
     revalidatePath("/home");
     revalidatePath("/settings");
+    // The Daily Activity chart on Analytics consumes
+    // fit_daily_metrics.active_minutes (derived above) — without this
+    // revalidate, the chart serves stale data until the next route push.
+    revalidatePath("/analytics");
     return { success: true, daysFetched: daysWritten, sessionsFetched: sessionsWritten };
   } catch (e) {
     console.error("syncHealthConnectData error:", e);
