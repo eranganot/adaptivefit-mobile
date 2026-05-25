@@ -18,6 +18,7 @@ import {
 import {
   summarizeExternalActivity,
   formatExternalActivityForPrompt,
+  formatRecentSessionsForPrompt,
 } from "@/lib/coach/externalActivity";
 import { COACH_CHAT_TOOLS, functionNameToActionType } from "@/lib/coach/chatTools";
 import { eq, desc, and, inArray, sql, gte } from "drizzle-orm";
@@ -579,12 +580,19 @@ export async function coachChatTurn(
         (stateRow.manualOverride ? `- Manual level override active until ${stateRow.manualOverrideUntil?.toISOString().slice(0, 10)}\n` : "");
     }
 
-    // External training context — sessions from Strava / Samsung Health /
-    // Google Fit / etc. that the user did but didn't log in AdaptiveFit.
-    // Pulled from fit_sessions (populated by syncHealthConnectData on every
-    // HC sync). Without this, the chat coach would tell the athlete "you
-    // haven't trained recently" when in reality they ran 5k on Strava
+    // External sessions context — workouts/walks/rides from Strava / Samsung
+    // Health / Google Fit / etc. that landed in HC but weren't logged in
+    // AdaptiveFit. Pulled from fit_sessions (populated by syncHealthConnectData
+    // on every HC sync). Without this, the chat coach would tell the athlete
+    // "you haven't trained recently" when in reality they ran 5k on Strava
     // yesterday. 30-day window matches the standard sync horizon.
+    //
+    // We surface BOTH a high-level summary AND the most recent 3 individual
+    // sessions in detail, plus a heuristic classification per session
+    // ("training" vs "activity"). The HARD RULE that previously labelled
+    // every external session as "completed training" was wrong — a 1km
+    // morning walk is activity, not training. The new guidance lets
+    // Gemini reason about each session on its own merits.
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
       const externalRows = await db
@@ -605,9 +613,22 @@ export async function coachChatTurn(
       );
       const externalLine = formatExternalActivityForPrompt(externalSummary);
       if (externalLine) {
-        stateContext += `\n## External training visibility\n- ${externalLine}\n`;
+        const recentLines = formatRecentSessionsForPrompt(externalRows, new Date(), 3);
+        stateContext += `\n## External sessions seen (from connected apps)\n- ${externalLine}\n`;
+        if (recentLines.length > 0) {
+          stateContext += `\n### Most recent external sessions\n`;
+          for (const line of recentLines) {
+            stateContext += `- ${line}\n`;
+          }
+        }
         stateContext +=
-          `- HARD RULE: when discussing the athlete's recent training, count these external sessions as completed training. Do NOT say "you haven't trained" or "I don't see recent runs" when this count is > 0. The AdaptiveFit logs reflect what was logged in-app; external sessions are real training that happened elsewhere.\n`;
+          `\n### How to talk about external sessions\n` +
+          `- These are visible to you so you don't tell ${athleteName} "you haven't trained" when there IS recent activity.\n` +
+          `- BUT not every external session is a training session. Each one carries a "likely training" or "likely activity" label above based on duration + distance.\n` +
+          `  • "likely training": ≥30 min OR ≥3 km — treat as a real session. Refer to it as the workout type (e.g., "your 6km run yesterday").\n` +
+          `  • "likely activity": short / low-volume — a walk to the cafe, a quick errand. Do NOT call this "training" or "a session". Refer to it as "a walk" or "some activity" if you mention it at all.\n` +
+          `- If the only recent thing is a "likely activity" session and ${athleteName} asks about training: be honest. "Your last training session was the strength workout on May 24. You also went for a walk this morning." Don't conflate the two.\n` +
+          `- If ${athleteName} disagrees with the classification ("that walk WAS my recovery"), accept it and offer to log it as an AdaptiveFit workout so the coach treats it as training going forward.\n`;
       }
     } catch (err) {
       // Non-fatal — coach chat still works with workout_logs alone.

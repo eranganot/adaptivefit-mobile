@@ -10,7 +10,7 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { workoutLogs, userLevelState, users, fitDailyMetrics, goals, bodyMetrics, strengthLogs } from "@/lib/db/schema";
+import { workoutLogs, userLevelState, users, fitDailyMetrics, fitSessions, goals, bodyMetrics, strengthLogs } from "@/lib/db/schema";
 import { eq, sql, and, gte, asc } from "drizzle-orm";
 import { sundayOfWeekIL, sundayNWeeksAgo, toILDateString, weekLabel } from "@/lib/analytics/week";
 
@@ -201,30 +201,33 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       .orderBy(asc(sql`DATE(${workoutLogs.performedAt} AT TIME ZONE 'Asia/Jerusalem')`)),
   ]);
 
-  // ── A3 supplement: pull per-day active_minutes from fit_daily_metrics
-  //     (external ExerciseSession durations, derived in syncHealthConnectData).
+  // ── A3 supplement: per-day active minutes from external HC sessions
   //
-  // Kept as a separate query so the JOIN doesn't complicate the GROUP BY
-  // on the workout_logs query. Merged into dailyActivity below.
+  // Pull raw fit_sessions and bucket by Asia/Jerusalem date — same TZ the
+  // workout_logs query above uses. This matters because:
+  //   1. Without TZ alignment, a workout logged at 22:00 IL (= 19:00 UTC)
+  //      lands in different day buckets in the two sources and the merge
+  //      misattributes activity.
+  //   2. Reading directly from fit_sessions (not the cached
+  //      fit_daily_metrics.active_minutes) gives us the raw durations to
+  //      apply per-day dedup logic against workout_logs.
   //
-  // Date semantics: fit_daily_metrics.date is YYYY-MM-DD UTC (matches the
-  // way readDailyMetrics buckets the data). The workout_logs query uses
-  // Asia/Jerusalem local date. Small mismatch at the day boundary in TZs
-  // east of UTC — for Israel (UTC+2/+3) a midnight UTC session lands in
-  // the right local day for any reasonable workout time, so we don't
-  // convert. If this ever needs to be exact, add an AT TIME ZONE cast.
-  const fitDailyForActivity = await db
+  // Sum durations per IL day. Sessions that span IL midnight are bucketed
+  // by their start day (simpler; multi-day sessions are rare and approximate
+  // bucketing is fine for the chart).
+  const fitSessionsForActivity = await db
     .select({
-      day: sql<string>`${fitDailyMetrics.date}::text`,
-      activeMinutes: fitDailyMetrics.activeMinutes,
+      day: sql<string>`DATE(${fitSessions.startTime} AT TIME ZONE 'Asia/Jerusalem')::text`,
+      durationSec: sql<number>`SUM(EXTRACT(EPOCH FROM (${fitSessions.endTime} - ${fitSessions.startTime})))::int`,
     })
-    .from(fitDailyMetrics)
+    .from(fitSessions)
     .where(
       and(
-        eq(fitDailyMetrics.userId, user.id),
-        gte(fitDailyMetrics.date, sql`(CURRENT_DATE - INTERVAL '28 days')`),
+        eq(fitSessions.userId, user.id),
+        gte(fitSessions.startTime, twentyEightDaysAgo),
       ),
-    );
+    )
+    .groupBy(sql`DATE(${fitSessions.startTime} AT TIME ZONE 'Asia/Jerusalem')`);
 
   // Shape weekly buckets — exact Sunday-key matching, no fuzzy window
   // SQL returns "YYYY-MM-DD" strings (Sunday dates in Israel timezone)
@@ -323,20 +326,32 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
 
   // Shape daily activity points.
   //
-  // Merge two sources keyed on YYYY-MM-DD:
-  //   1. workout_logs → activeMin (already in minutes) + avgRpe
-  //   2. fit_daily_metrics → activeMinutes from external HC sessions
+  // Two data sources keyed on YYYY-MM-DD (both in Asia/Jerusalem now):
+  //   1. workout_logs → activeMin (from duration_sec) + avgRpe
+  //   2. fit_sessions → activeMin (summed durations of external HC sessions)
   //
-  // Days present in only one source get the other component as 0/null.
-  // No double-counting because in-app GPS runs live in workout_logs only
-  // (see readSessions docstring — we deliberately skip importing AF's own
-  // runs from HC). External-only days (e.g. you ran on Strava but didn't
-  // log in AdaptiveFit) will show active time but avgRpe = 0.
+  // Merge rule: **prefer workout_logs over fit_sessions on the same day.**
+  //
+  // The previous additive merge (wlMin + fitMin) silently double-counted
+  // whenever a user-logged AF workout also existed in HC as an external
+  // ExerciseSession (which Strava / Samsung Health record automatically).
+  // A 30-min run logged in both AF and Strava became 60 min on the chart.
+  //
+  // The new rule: if you logged ANYTHING in AdaptiveFit that day, that IS
+  // the source of truth — don't sum HC durations on top. External-only
+  // days (you ran on Strava but didn't log in AF) still surface as
+  // fit_sessions-derived bars. avgRpe stays 0 on external-only days
+  // because RPE is an AF-input concept.
+  //
+  // Limitation worth knowing: if you do BOTH a logged AF run AND a
+  // separate unlogged walk on the same day, only the logged run shows.
+  // Acceptable for now — "if you logged it, it's the day's record" is
+  // simple and predictable. Per-session time-overlap dedup (a future
+  // improvement) would handle the corner case more precisely.
   const fitMinByDay = new Map<string, number>();
-  for (const row of fitDailyForActivity) {
-    if (row.activeMinutes != null && row.activeMinutes > 0) {
-      fitMinByDay.set(row.day, row.activeMinutes);
-    }
+  for (const row of fitSessionsForActivity) {
+    const min = Math.round(Number(row.durationSec) / 60);
+    if (min > 0) fitMinByDay.set(row.day, min);
   }
   const allDays = new Set<string>([
     ...dailyActivityRaw.map((r) => r.day),
@@ -348,14 +363,16 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
     const wl = dailyByKey.get(dayKey);
     const wlMin = wl ? Number(wl.activeMin) : 0;
     const fitMin = fitMinByDay.get(dayKey) ?? 0;
-    const total = Math.round((wlMin + fitMin) * 10) / 10;
+    // Prefer workout_logs when present. Fall back to fit_sessions only when
+    // the user didn't log anything in AF that day.
+    const activeMin = wlMin > 0 ? wlMin : fitMin;
     return {
       day: new Date(dayKey + "T12:00:00").toLocaleDateString("en-GB", {
         day: "numeric",
         month: "short",
         timeZone: "Asia/Jerusalem",
       }),
-      activeMin: total,
+      activeMin: Math.round(activeMin * 10) / 10,
       avgRpe: wl ? Number(wl.avgRpe) : 0,
     };
   });
