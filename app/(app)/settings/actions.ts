@@ -3,10 +3,11 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { users, userLevelState, fitDailyMetrics, fitSessions } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gte, lte } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import type { FitDailyAggregate, FitSessionSummary } from "@/lib/fit/types";
+import { deriveActiveMinutesByDay } from "@/lib/fit/deriveActiveMinutes";
 
 export async function setLocale(locale: "en" | "he") {
   try {
@@ -266,6 +267,80 @@ export async function syncHealthConnectData(
         // activityType from a future HC plugin version.
         console.warn("[syncHealthConnectData] session upsert failed:", s.fitSessionId, e);
       }
+    }
+
+    // ── Active-minutes derivation (Phase 8b polish #1) ────────────
+    // HC doesn't surface "active minutes" as a separate aggregate the way
+    // legacy Google Fit did. We derive it from ExerciseSession durations:
+    // for each UTC day in the sync window, sum the durations of any
+    // sessions overlapping that day (split at midnight). Pull ALL sessions
+    // in the window from DB (not just the ones in this sync's payload) so
+    // a day with only pre-existing sessions still gets its active_minutes
+    // recomputed correctly.
+    //
+    // Range: the daily-aggregates payload defines the window we care about
+    // — if days[] is empty (sessions-only sync) we fall back to a 30-day
+    // window to keep the work bounded.
+    try {
+      let windowStart: Date;
+      let windowEnd: Date;
+      if (days.length > 0) {
+        const dates = days.map((d) => new Date(`${d.date}T00:00:00.000Z`));
+        windowStart = new Date(Math.min(...dates.map((d) => d.getTime())));
+        windowEnd = new Date(Math.max(...dates.map((d) => d.getTime())));
+        // Extend windowEnd to end-of-day UTC so a session ending late on
+        // that date is included in the query.
+        windowEnd.setUTCHours(23, 59, 59, 999);
+      } else {
+        windowEnd = new Date();
+        windowStart = new Date(windowEnd);
+        windowStart.setUTCDate(windowStart.getUTCDate() - 30);
+      }
+
+      // Sessions whose [startTime, endTime] window overlaps [windowStart,
+      // windowEnd]. Strict overlap: a session ending exactly at windowStart
+      // or starting exactly at windowEnd contributes nothing useful, but
+      // the inclusive bounds are simpler and the no-op math drops them
+      // inside the derivation helper.
+      const sessionRows = await db
+        .select({
+          startTime: fitSessions.startTime,
+          endTime: fitSessions.endTime,
+        })
+        .from(fitSessions)
+        .where(
+          and(
+            eq(fitSessions.userId, user.id),
+            lte(fitSessions.startTime, windowEnd),
+            gte(fitSessions.endTime, windowStart),
+          ),
+        );
+
+      const minutesByDay = deriveActiveMinutesByDay(sessionRows);
+
+      // Upsert the derived value per day. Don't touch other columns —
+      // they were just set by the daily-aggregates pass above and we
+      // don't want to clobber them with nulls.
+      for (const [date, minutes] of minutesByDay) {
+        await db
+          .insert(fitDailyMetrics)
+          .values({
+            userId: user.id,
+            date,
+            activeMinutes: minutes,
+          })
+          .onConflictDoUpdate({
+            target: [fitDailyMetrics.userId, fitDailyMetrics.date],
+            set: {
+              activeMinutes: minutes,
+              updatedAt: new Date(),
+            },
+          });
+      }
+    } catch (e) {
+      // Non-fatal — daily aggregates + sessions are already written.
+      // Logging here surfaces it in Railway if derivation breaks.
+      console.warn("[syncHealthConnectData] active-minutes derivation failed:", e);
     }
 
     revalidatePath("/home");

@@ -134,44 +134,39 @@ Effort: ~1h.
 
 ---
 
-## Pre-existing test failures — GPS run tracker
+## Tracker test failures — RESOLVED 2026-05-24
 
-Surfaced 2026-05-24 during the Phase 8b.2 verification run. Four tests in
-`tests/run/tracker.test.ts` fail against the current `lib/run/tracker.ts` +
-`lib/run/haversine.ts`. The HC permission work didn't touch any tracker code
-— these are real, pre-existing bugs in the run-tracking math. Run data
-correctness is affected (your last km isn't counted; reported pace is too
-slow), so worth fixing before the next training-data analysis.
+All 4 failures fixed. Root causes were split between test fixture and
+production code:
 
-**Failures (from `pnpm test`):**
+**3 of the 4 (tests 1, 2 in computeSplits, 4 in windowedPace):** Test
+fixture bug. `straightRoute` in `tests/run/tracker.test.ts` was moving
+points along longitude with a flat-earth `1/111` deg-per-km conversion
+that ignored the `cos(lat)` factor. At lat 32.07°, 1° of longitude is
+only ~94 km (not 111), so "100m" steps were producing points that
+haversine evaluated to ~85m apart. 10 of those gave a total of 849m
+instead of 1000m, never tripping the 1km split boundary. Fixed by
+switching the fixture to move along latitude using
+`(6371 * Math.PI / 180)` km/deg — the exact value haversine returns,
+no cos-factor needed.
 
-1. `isPointValid > velocity at exactly max → valid` — expected `true`, got
-   `false`. Boundary off-by-one: `isPointValid` uses `>` where the test
-   expects `>=` (or vice versa) when comparing velocity against
-   `MAX_VELOCITY_MS`. Likely a one-character change.
+**1 of the 4 (computeSplits "3 km route → three splits"):** Real
+production bug in `computeSplits`. Float-accumulation drift: after
+30 haversine segments, `accumulated` reaches `0.999999999999632` —
+just below 1 km — and the boundary check `accumulated >= 1` silently
+skips emitting the third split. Fixed in `lib/run/haversine.ts` by
+rewriting the loop to compare cumulative `totalKm` against integer
+km boundaries `nextSplitKm = 1, 2, 3, …` with a tiny epsilon
+(`SPLIT_BOUNDARY_EPSILON_KM = 1e-9`). Drift no longer compounds per
+split. Also handles segments that cross multiple km boundaries (rare
+but possible after a long GPS pause) via an inner `while` loop, and
+skips zero-length segments cleanly.
 
-2. `computeSplits > exactly 1 km → one split` — expected length 1, got 0.
-   The final partial km isn't being closed. Likely the split-emission loop
-   exits without flushing the in-progress accumulator when the route ends
-   exactly on a km boundary.
-
-3. `computeSplits > 3 km route → three splits` — expected 3, got 2. Same
-   root cause as #2 — the final km isn't being emitted. Off-by-one in the
-   loop's termination condition.
-
-4. `windowedPace > 2 points 100m apart over 30s → ~300 sec/km` — expected
-   pace < 320 sec/km, got 353. Pace interpolation is ~17% high on a 30s
-   window. Two candidates: (a) the window includes both endpoints when it
-   should be half-open, inflating the time-denominator; (b) haversine is
-   summing segment distance differently than the test fixture assumes.
-
-**How to pick this up:**
-1. `pnpm test -- tests/run/tracker.test.ts` to scope to just these 4.
-2. Walk the assertions and patch each in turn — they're independent (1) and
-   paired (2+3), with (4) standalone.
-3. Likely <100 LoC total. After fixing, backfill `run_sessions` with the
-   corrected pace/splits via a one-shot migration if the historical numbers
-   are off enough to matter for the coach FSM's RPE/pace correlation.
+**User-visible impact of the production fix:** Any recorded run that
+exactly hits an integer km total previously lost its final split. The
+fix is correct from the moment it deploys; historical `run_sessions`
+rows are not re-derived (would require a backfill script if anyone
+ever cares about the lost splits from before this fix).
 
 ---
 

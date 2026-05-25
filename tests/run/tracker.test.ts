@@ -21,8 +21,25 @@ function point(lat: number, lon: number, ts: number, accuracy = 5): GpsRawPoint 
 /**
  * Build a straight-line route of `n` points each ~distanceKm apart,
  * spaced `intervalMs` milliseconds apart. Starts from (lat, lon).
- * We move east by adjusting longitude (~111km per degree).
+ *
+ * Moves along LATITUDE (north) rather than longitude. Reason: 1° of
+ * latitude is the same distance everywhere on Earth (the meridians are
+ * great circles), so the deg↔km conversion is exact and matches whatever
+ * Earth radius haversine uses. Moving along longitude requires a
+ * cos(lat) factor that introduces a ~16% error at lat 32° if not
+ * applied. The previous implementation moved along longitude with no
+ * cos(lat) factor, so "100m" steps haversined to ~85m, causing the
+ * computeSplits / windowedPace / "velocity at max" tests to fail with
+ * the implementation correctly applying haversine. Tests were wrong,
+ * not the production math.
+ *
+ * Use the same EARTH_RADIUS_KM = 6371 as haversine — pinned at
+ * 111.1949266 km/deg via (6371 * π / 180) — so haversine of two
+ * fixture points returns the requested distance to within floating-
+ * point precision.
  */
+const FIXTURE_KM_PER_DEG_LAT = (6371 * Math.PI) / 180; // ≈ 111.1949266
+
 function straightRoute(
   n: number,
   distanceKmPerStep: number,
@@ -32,12 +49,12 @@ function straightRoute(
   startLon = 34.78,
   accuracy = 5,
 ): GpsRawPoint[] {
-  const degPerKm = 1 / 111;
+  const degPerKm = 1 / FIXTURE_KM_PER_DEG_LAT;
   const points: GpsRawPoint[] = [];
   for (let i = 0; i < n; i++) {
     points.push({
-      lat: startLat,
-      lon: startLon + i * distanceKmPerStep * degPerKm,
+      lat: startLat + i * distanceKmPerStep * degPerKm,
+      lon: startLon,
       ts: startTs + i * intervalMs,
       accuracy,
     });
@@ -91,11 +108,16 @@ describe("isPointValid", () => {
   });
 
   it("velocity at exactly max → valid", () => {
-    // 8 m/s over 1 second = 8 m = 0.008 km
+    // 8 m/s over 1 second = 8 m. Move along latitude (no cos correction
+    // needed) using the same Earth-radius constant haversine uses, so the
+    // distance is exactly 8m per haversine and velocity = 8.000 m/s,
+    // which the `<= MAX_VELOCITY_MS` check passes inclusively.
+    // (The earlier fixture used 111_000 * cos(lat) along longitude, which
+    // came out to 8.011 m/s due to the 0.18% mismatch between 111000 and
+    // EARTH_RADIUS_KM × π/180 = 111195.)
     const prev = point(32.07, 34.78, 0);
-    // Move ~8m east in 1000ms
-    const degFor8m = 8 / (111_000 * Math.cos((32.07 * Math.PI) / 180));
-    const next = point(32.07, 34.78 + degFor8m, 1000);
+    const degFor8m = 0.008 / FIXTURE_KM_PER_DEG_LAT;
+    const next = point(32.07 + degFor8m, 34.78, 1000);
     expect(isPointValid(next, prev)).toBe(true);
   });
 
@@ -191,10 +213,13 @@ describe("windowedPace", () => {
 
   it("2 points 100m apart over 30s → ~300 sec/km", () => {
     // 100m ≈ 0.1 km, over 30s → pace = 30/0.1 = 300 s/km
-    const degFor100m = 0.1 / 111;
+    // Move along latitude using the haversine-matched constant — see
+    // straightRoute comment for why moving along longitude with /111 was
+    // wrong (16% short at this latitude → pace came out as 353 not 300).
+    const degFor100m = 0.1 / FIXTURE_KM_PER_DEG_LAT;
     const pts = [
       point(32.07, 34.78, 0),
-      point(32.07, 34.78 + degFor100m, 30_000),
+      point(32.07 + degFor100m, 34.78, 30_000),
     ];
     const pace = windowedPace(pts, 30_000);
     expect(pace).not.toBeNull();
@@ -203,14 +228,16 @@ describe("windowedPace", () => {
   });
 
   it("uses only the last 30s of points", () => {
-    // First point is 60s old, then 3 points in the last 30s
-    const degPerStep = 0.1 / 111; // 100m
+    // First point is 60s old, then 3 points in the last 30s.
+    // Same fixture-bug fix as the test above — latitude, haversine-matched
+    // constant.
+    const degPerStep = 0.1 / FIXTURE_KM_PER_DEG_LAT; // 100m
     const now = 60_000;
     const pts = [
-      point(32.07, 34.78, 0),           // 60s ago — outside window
-      point(32.07, 34.78 + degPerStep, now - 30_000),
-      point(32.07, 34.78 + degPerStep * 2, now - 15_000),
-      point(32.07, 34.78 + degPerStep * 3, now),
+      point(32.07, 34.78, 0),                          // 60s ago — outside window
+      point(32.07 + degPerStep, 34.78, now - 30_000),
+      point(32.07 + degPerStep * 2, 34.78, now - 15_000),
+      point(32.07 + degPerStep * 3, 34.78, now),
     ];
     const paceWindowed = windowedPace(pts, 30_000);
     const paceAll = windowedPace(pts, 120_000);

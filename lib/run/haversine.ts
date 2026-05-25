@@ -59,42 +59,63 @@ export function isPointValid(
   return velocityMs <= GPS_FILTER.MAX_VELOCITY_MS;
 }
 
+/** Tolerance for the "did we cross a km boundary?" comparison. Float
+ *  accumulation across many haversine segments drifts by ~1e-13 per
+ *  segment — a 30-km route can accumulate ~3e-12 of drift, so a 1µm
+ *  epsilon is safely under any real measurement noise while clearing
+ *  the float-drift band. Without this, a route that actually covers
+ *  N km can emit only N-1 splits because the last one lands at e.g.
+ *  0.99999999999963 — just under the integer boundary. */
+const SPLIT_BOUNDARY_EPSILON_KM = 1e-9;
+
 /**
  * Compute per-km splits from an ordered array of accepted GPS points.
  * Returns an empty array if total distance < 1 km.
+ *
+ * Tracks cumulative distance against integer km boundaries (1, 2, 3, …)
+ * rather than per-km accumulators — float drift is bounded by the total
+ * distance instead of compounding per split, which fixes the "last km
+ * isn't counted" bug on routes that exactly hit an integer total.
+ *
+ * Handles segments that span more than one km boundary (rare in practice
+ * — single GPS samples are seconds apart — but possible after a long
+ * pause-then-jump) via the inner `while` loop.
  */
 export function computeSplits(points: GpsRawPoint[]): GpsSplit[] {
   if (points.length < 2) return [];
 
   const splits: GpsSplit[] = [];
-  let kmStart = 0;          // index of the point where the current km started
-  let accumulated = 0;      // distance accumulated in the current km (km)
-  let tsAtKmStart = points[0].ts;
-  let kmNumber = 1;
+  let totalKm = 0;
+  let nextSplitKm = 1;
+  let tsAtPrevSplit = points[0].ts;
 
   for (let i = 1; i < points.length; i++) {
     const seg = haversineKm(
       points[i - 1].lat, points[i - 1].lon,
       points[i].lat,     points[i].lon,
     );
-    accumulated += seg;
+    if (seg <= 0) continue;
+    const prevTotal = totalKm;
+    totalKm += seg;
 
-    if (accumulated >= 1) {
-      // Interpolate to find exact 1 km timestamp
-      const overshoot = accumulated - 1;
-      const segFraction = overshoot / seg;
-      const tsAtKm = points[i].ts - (points[i].ts - points[i - 1].ts) * segFraction;
-      const splitSec = (tsAtKm - tsAtKmStart) / 1000;
+    // Emit a split for every km boundary this segment crossed. Usually
+    // 0 or 1 iterations; >1 only if the segment is unusually long.
+    while (totalKm + SPLIT_BOUNDARY_EPSILON_KM >= nextSplitKm) {
+      // Fraction of THIS segment at which we hit the km boundary.
+      // Clamped to [0, 1] so a small negative from the epsilon doesn't
+      // wrap into a future timestamp.
+      const distanceIntoSegmentKm = Math.max(0, nextSplitKm - prevTotal);
+      const segFraction = Math.min(1, distanceIntoSegmentKm / seg);
+      const tsAtKm =
+        points[i - 1].ts + (points[i].ts - points[i - 1].ts) * segFraction;
+      const splitSec = (tsAtKm - tsAtPrevSplit) / 1000;
 
-      splits.push({ km: kmNumber, paceSec: Math.round(splitSec) });
-      kmNumber++;
-      tsAtKmStart = tsAtKm;
-      accumulated = overshoot;
-      kmStart = i;
+      splits.push({ km: nextSplitKm, paceSec: Math.round(splitSec) });
+      tsAtPrevSplit = tsAtKm;
+      nextSplitKm++;
     }
   }
 
-  void kmStart; // used only for bookkeeping
   return splits;
 }
 
