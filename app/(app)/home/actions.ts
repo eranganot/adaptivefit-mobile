@@ -459,6 +459,11 @@ export async function coachChatTurn(
     return { error: err instanceof Error ? err.message : "Auth error", code: "auth" };
   }
 
+  // Resolve the athlete's display name once, used in both stateContext (for
+  // the external-sessions section below) and the systemInstruction further
+  // down. Hoisted here so both scopes can reference it without redefinition.
+  const athleteName = displayName?.trim() || "Eran";
+
   // 2. Hard-cap check (rare safety net, not a typical-conversation limit)
   try {
     const existing = await db.select().from(coachChatMessages).where(
@@ -710,8 +715,8 @@ export async function coachChatTurn(
   const functionCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const modelName = MODELS.FAST; // gemini-2.5-flash
   try {
-    const athleteName = displayName?.trim() || "Eran";
-
+    // athleteName is hoisted to the top of coachChatTurn so the
+    // stateContext-building block above can also reference it.
     const systemInstruction =
       `You are an experienced personal sports coach for ${athleteName} — qualified across running, strength, and mobility/recovery. ` +
       `${athleteName} is rehabbing plantar fasciitis (foot pain), which underlies all running decisions but doesn't define every conversation. Your job is to give specific, evidence-based coaching grounded in the athlete's actual data, prioritizing injury prevention and sustainable progression over chasing volume or speed.\n\n` +

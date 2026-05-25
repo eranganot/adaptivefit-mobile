@@ -12,7 +12,25 @@
  * Pure function. Caller queries the DB (or supplies in-memory rows for
  * tests) and passes the array in.
  */
-import type { FitSession } from "@/lib/db/schema";
+// FitSession is not imported because we deliberately use a permissive
+// SessionInput type below — `startTime`/`endTime` accept either Date OR
+// ISO string at the input boundary (the runtime normalizes both). Tying
+// the signature to Drizzle's FitSession (Date-only) made the test helpers
+// uncompilable for no runtime benefit. Production callers (server actions
+// querying via Drizzle) still get Date objects; tests can pass either.
+
+/**
+ * Input shape for the external-activity helpers. Intentionally narrower
+ * than FitSession (only the fields these helpers actually read) and
+ * permissive on the date fields. The internal normalizers handle either
+ * shape safely.
+ */
+export type SessionInput = {
+  startTime: Date | string;
+  endTime: Date | string;
+  distanceM: number | null;
+  sourceApp: string | null;
+};
 
 /**
  * Compact summary of external activity over a window. Keep flat + simple so
@@ -49,7 +67,7 @@ export type ExternalActivitySummary = {
  *                 Defaults to `new Date()`. Explicit for deterministic tests.
  */
 export function summarizeExternalActivity(
-  sessions: Array<Pick<FitSession, "startTime" | "endTime" | "distanceM" | "sourceApp">>,
+  sessions: SessionInput[],
   since: Date,
   until: Date = new Date(since.getTime() + 30 * 24 * 60 * 60 * 1000),
   now: Date = new Date(),
@@ -61,8 +79,8 @@ export function summarizeExternalActivity(
   const sourcesByApp: Record<string, number> = {};
 
   for (const s of sessions) {
-    const start = s.startTime instanceof Date ? s.startTime : new Date(s.startTime as unknown as string);
-    const end = s.endTime instanceof Date ? s.endTime : new Date(s.endTime as unknown as string);
+    const start = s.startTime instanceof Date ? s.startTime : new Date(s.startTime);
+    const end = s.endTime instanceof Date ? s.endTime : new Date(s.endTime);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
     if (end <= start) continue;
     // Window overlap: session must touch [since, until].
@@ -156,26 +174,26 @@ function formatSessionStart(start: Date, now: Date): string {
  *  duration, distance (if any), source app, and the training/activity
  *  classification so the chat coach can use precise terminology. */
 export function formatRecentSessionsForPrompt(
-  sessions: Array<Pick<FitSession, "startTime" | "endTime" | "distanceM" | "sourceApp">>,
+  sessions: SessionInput[],
   now: Date = new Date(),
   limit: number = 3,
 ): string[] {
   const sorted = [...sessions]
     .filter((s) => {
-      const start = s.startTime instanceof Date ? s.startTime : new Date(s.startTime as unknown as string);
-      const end = s.endTime instanceof Date ? s.endTime : new Date(s.endTime as unknown as string);
+      const start = s.startTime instanceof Date ? s.startTime : new Date(s.startTime);
+      const end = s.endTime instanceof Date ? s.endTime : new Date(s.endTime);
       return !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && end > start;
     })
     .sort((a, b) => {
-      const aEnd = a.endTime instanceof Date ? a.endTime : new Date(a.endTime as unknown as string);
-      const bEnd = b.endTime instanceof Date ? b.endTime : new Date(b.endTime as unknown as string);
+      const aEnd = a.endTime instanceof Date ? a.endTime : new Date(a.endTime);
+      const bEnd = b.endTime instanceof Date ? b.endTime : new Date(b.endTime);
       return bEnd.getTime() - aEnd.getTime();
     })
     .slice(0, limit);
 
   return sorted.map((s) => {
-    const start = s.startTime instanceof Date ? s.startTime : new Date(s.startTime as unknown as string);
-    const end = s.endTime instanceof Date ? s.endTime : new Date(s.endTime as unknown as string);
+    const start = s.startTime instanceof Date ? s.startTime : new Date(s.startTime);
+    const end = s.endTime instanceof Date ? s.endTime : new Date(s.endTime);
     const durationSec = (end.getTime() - start.getTime()) / 1000;
     const durationMin = Math.round(durationSec / 60);
     const km = s.distanceM != null && s.distanceM > 0 ? s.distanceM / 1000 : null;
