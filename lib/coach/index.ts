@@ -10,6 +10,7 @@
  * then persists the result.
  */
 import type { WorkoutLog, FeedbackSentiment, UserLevelState } from "@/lib/db/schema";
+import type { ExternalActivitySummary } from "./externalActivity";
 
 export type GoalCategory = "running" | "body_shape" | "weight_loss" | "strength";
 
@@ -40,6 +41,21 @@ export type CoachInputs = {
     volumeMultiplier: number;
     levelOffset: number;
   };
+  /**
+   * Optional summary of external training activity from Health Connect
+   * (`fit_sessions` rows — Strava/Samsung/Google Fit/etc.). When present and
+   * non-zero, the FSM acknowledges it in the session rationale so the user
+   * knows their external training was visible to the coach.
+   *
+   * The FSM does NOT currently change rule outcomes based on this — external
+   * sessions lack RPE/pain signal needed for green-session detection, so
+   * promotion still requires actual AdaptiveFit logs. The chat coach
+   * (`coachChatTurn`) uses the same summary in its prompt context for
+   * conversational awareness.
+   *
+   * Pass undefined to skip (callers without HC data, e.g. legacy tests).
+   */
+  externalActivity?: ExternalActivitySummary;
 };
 
 export type SessionBlock =
@@ -87,6 +103,20 @@ export const TUNABLES = {
 export function evaluateCoach(inputs: CoachInputs): CoachResult {
   const { state, today, sessionKind = "quality", goalCategory = "running" } = inputs;
   const rulesApplied: string[] = [];
+
+  // Side-rule (no plan effect): acknowledge external training so audit logs
+  // and the roadmap regen step can tell whether the FSM had visibility into
+  // non-AF sessions. The actual plan logic doesn't branch on this — external
+  // sessions lack RPE/pain signal, so promotion still requires AF logs. The
+  // chat coach (coachChatTurn) is where the data is actually used.
+  if (inputs.externalActivity && inputs.externalActivity.count > 0) {
+    rulesApplied.push(
+      `external_activity_seen:${inputs.externalActivity.count}` +
+      (inputs.externalActivity.daysSinceLastSession != null
+        ? `:lastDaysAgo=${inputs.externalActivity.daysSinceLastSession}`
+        : ""),
+    );
+  }
 
   // Rule 0 (all categories): manual override — lock level for 7-day window
   const overrideActive =

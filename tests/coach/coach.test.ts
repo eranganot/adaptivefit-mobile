@@ -129,3 +129,98 @@ describe("coach: default", () => {
     expect(result.rulesApplied).toContain("default_repeat");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// External activity (Tier 2 #3 — Strava/Samsung visibility)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("coach: external activity data path", () => {
+  const today = new Date("2026-04-27");
+
+  it("records a rules_applied entry when external sessions are present", () => {
+    const result = evaluateCoach({
+      recentLogs: [log({ rpe: 6, footPain: 2 })],
+      state: baseState,
+      today,
+      externalActivity: {
+        count: 3,
+        totalActiveMin: 90,
+        totalDistanceKm: 12.5,
+        lastSessionEndIso: "2026-04-26T10:00:00Z",
+        daysSinceLastSession: 1,
+        sourcesByApp: { "com.strava": 3 },
+      },
+    });
+    const externalRule = result.rulesApplied.find((r) =>
+      r.startsWith("external_activity_seen"),
+    );
+    expect(externalRule).toBeDefined();
+    expect(externalRule).toContain("3"); // count
+    expect(externalRule).toContain("lastDaysAgo=1");
+  });
+
+  it("does NOT add the rules_applied entry when count is 0", () => {
+    const result = evaluateCoach({
+      recentLogs: [log({ rpe: 6, footPain: 2 })],
+      state: baseState,
+      today,
+      externalActivity: {
+        count: 0,
+        totalActiveMin: 0,
+        totalDistanceKm: 0,
+        lastSessionEndIso: null,
+        daysSinceLastSession: null,
+        sourcesByApp: {},
+      },
+    });
+    expect(
+      result.rulesApplied.some((r) => r.startsWith("external_activity_seen")),
+    ).toBe(false);
+  });
+
+  it("does NOT change plan outcome — same plan with or without externalActivity", () => {
+    // Critical invariant: external sessions are a visibility signal only.
+    // Plan logic must remain identical so existing FSM tests stay valid and
+    // so external sessions don't accidentally cause promotions/freezes (they
+    // lack RPE/pain).
+    const inputs = {
+      recentLogs: [log({ rpe: 6, footPain: 2 })],
+      state: baseState,
+      today,
+    };
+    const without = evaluateCoach(inputs);
+    const withExt = evaluateCoach({
+      ...inputs,
+      externalActivity: {
+        count: 5,
+        totalActiveMin: 180,
+        totalDistanceKm: 30,
+        lastSessionEndIso: "2026-04-26T10:00:00Z",
+        daysSinceLastSession: 1,
+        sourcesByApp: { "com.strava": 5 },
+      },
+    });
+    // Plan must match exactly
+    expect(withExt.todayPlan).toEqual(without.todayPlan);
+    // State must match exactly
+    expect(withExt.newState.currentLevel).toBe(without.newState.currentLevel);
+    expect(withExt.newState.greenSessionCount).toBe(without.newState.greenSessionCount);
+    expect(withExt.newState.freezeActive).toBe(without.newState.freezeActive);
+    // rulesApplied differs only by the external_activity_seen entry
+    const withoutExtRule = withExt.rulesApplied.filter(
+      (r) => !r.startsWith("external_activity_seen"),
+    );
+    expect(withoutExtRule).toEqual(without.rulesApplied);
+  });
+
+  it("undefined externalActivity is the safe default — no rule entry, no errors", () => {
+    const result = evaluateCoach({
+      recentLogs: [log({ rpe: 6, footPain: 2 })],
+      state: baseState,
+      today,
+      // externalActivity intentionally omitted
+    });
+    expect(
+      result.rulesApplied.some((r) => r.startsWith("external_activity_seen")),
+    ).toBe(false);
+  });
+});

@@ -1,4 +1,4 @@
-// AdaptiveFit service worker — v3
+// AdaptiveFit service worker — v4
 // Strategy:
 //   - _next/static/** (immutable hashed bundles) → CacheFirst, long-lived cache
 //   - manifest.json only             → CacheFirst shell precache (auth routes removed)
@@ -10,9 +10,20 @@
 // pre-theme-script) and falling back to that stale shell on hard refresh, causing
 // the whole app to render in light mode. They will be cached on first online visit
 // via the existing NetworkFirst path instead.
+//
+// v4 change: eagerly-clone responses BEFORE kicking off the async cache write
+// in the NetworkFirst branch. Previously, `caches.open(...).then(cache =>
+// cache.put(req, res.clone()))` deferred the clone until AFTER caches.open
+// resolved — by which time `return res` had already handed the body to the
+// browser, the body was locked, and `res.clone()` threw "Response body is
+// already used" on every navigation request. Loud in logcat, harmless to
+// functionality, but worth killing.
+//
+// Bump cache names so the new SW activates cleanly and old buggy caches are
+// evicted on first visit after deploy.
 
-const SHELL_CACHE = "af-shell-v3";
-const STATIC_CACHE = "af-static-v2";
+const SHELL_CACHE = "af-shell-v4";
+const STATIC_CACHE = "af-static-v3";
 const SHELL_PRECACHE = ["/manifest.json"];
 
 // ── Install ──────────────────────────────────────────────────────────────────
@@ -73,7 +84,14 @@ self.addEventListener("fetch", (event) => {
     fetch(event.request)
       .then((res) => {
         if (res.ok) {
-          caches.open(SHELL_CACHE).then((cache) => cache.put(event.request, res.clone()));
+          // Clone EAGERLY while res.body is still untouched. The deferred
+          // caches.open chain runs later, by which time `return res` has
+          // handed the body to the browser stream. If we clone inside the
+          // deferred `.then((cache) => …)`, the body is already locked
+          // and clone() throws — the source of the "Response body is
+          // already used" console spam in v3.
+          const resClone = res.clone();
+          caches.open(SHELL_CACHE).then((cache) => cache.put(event.request, resClone));
         }
         return res;
       })

@@ -13,9 +13,14 @@ import {
   feedbackSentiment,
   goals,
   strengthLogs,
+  fitSessions,
 } from "@/lib/db/schema";
+import {
+  summarizeExternalActivity,
+  formatExternalActivityForPrompt,
+} from "@/lib/coach/externalActivity";
 import { COACH_CHAT_TOOLS, functionNameToActionType } from "@/lib/coach/chatTools";
-import { eq, desc, and, inArray, sql } from "drizzle-orm";
+import { eq, desc, and, inArray, sql, gte } from "drizzle-orm";
 import type { GoalCategory } from "@/lib/coach";
 import { extractFeedback } from "@/lib/gemini/extractFeedback";
 import { summarizePostWorkout } from "@/lib/gemini/summarizePostWorkout";
@@ -323,11 +328,37 @@ export async function logManualWorkout(input: {
     const logsWithSentiment = recentRaw.map((l) => ({ ...l, sentiment: sentMap.get(l.id) ?? null }));
 
     const goalCategory: GoalCategory = (activeGoal?.category ?? "running") as GoalCategory;
+
+    // Also pull external sessions for FSM visibility — same 30d window the
+    // chat coach uses. evaluateCoach doesn't currently change plan outcomes
+    // based on this (external sessions lack RPE/pain), but it surfaces a
+    // `rules_applied` entry that lets us audit whether the FSM had context.
+    // Non-fatal if the query fails; FSM still runs with workout_logs alone.
+    let externalActivity = undefined;
+    try {
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
+      const externalRows = await db
+        .select({
+          startTime: fitSessions.startTime,
+          endTime: fitSessions.endTime,
+          distanceM: fitSessions.distanceM,
+          sourceApp: fitSessions.sourceApp,
+        })
+        .from(fitSessions)
+        .where(
+          and(eq(fitSessions.userId, user.id), gte(fitSessions.endTime, thirtyDaysAgo)),
+        );
+      externalActivity = summarizeExternalActivity(externalRows, thirtyDaysAgo, new Date());
+    } catch (err) {
+      console.warn("[logManualWorkout] external activity summary failed:", err);
+    }
+
     const coachResult = evaluateCoach({
       recentLogs: logsWithSentiment,
       state: stateRow ?? { currentLevel: 1, greenSessionCount: 0, freezeActive: false, freezeReason: null, manualOverride: false, manualOverrideUntil: null },
       today: new Date(),
       goalCategory,
+      externalActivity,
     });
 
     const { currentLevel, greenSessionCount, freezeActive, freezeReason } = coachResult.newState;
@@ -350,31 +381,29 @@ export async function logManualWorkout(input: {
     }
 
     // 5. Gemini post-workout summary (non-fatal — workout is already saved).
-    //    The summarizePostWorkout prompt is running-specific ("conservative
-    //    running coach assistant…"). For non-run types it produces off-topic
-    //    copy ("your run was…" for a strength session). Skip it for those
-    //    types — generic copy below is sufficient until the prompt is made
-    //    type-aware (see BACKLOG: type-aware post-workout summary).
+    //    Multi-discipline as of the coach prompt overhaul: all four workout
+    //    types now get a proper coached summary (running coach for runs,
+    //    strength coach for strength, mobility coach for mobility, light
+    //    acknowledgement for other). The system prompt in
+    //    lib/gemini/summarizePostWorkout.ts branches on `type`.
     const recentRpe = recentRaw.map((l) => l.rpe).slice(0, 7);
-    let summary = type === "strength"
-      ? "Strength session logged. Track your lifts week-over-week in Analytics."
-      : type === "mobility"
-        ? "Mobility session logged. Consistent mobility work protects your training."
-        : type === "other"
-          ? "Workout logged."
-          : "Workout logged! Keep monitoring your effort and pain levels.";
-    let adjustments = type === "strength"
-      ? [
-          "Keep RPE in the 7-8 range for productive strength work.",
-          "If a lift feels off, drop the weight before dropping the rep.",
-        ]
-      : ["Stay consistent with your training schedule.", "Rest when your body needs it."];
+    let summary = "Workout logged.";
+    let adjustments = ["Stay consistent with your training schedule.", "Rest when your body needs it."];
     try {
-      if (type === "run") {
-        const sumResult = await summarizePostWorkout({ rpe, footPain, notes, currentLevel, recentRpe });
-        summary = sumResult.summary;
-        adjustments = sumResult.adjustments;
-      }
+      const sumResult = await summarizePostWorkout({
+        type,
+        rpe,
+        footPain,
+        notes,
+        currentLevel,
+        recentRpe,
+        distanceKm: resolvedDistanceKm ? Number(resolvedDistanceKm) : null,
+        durationSec: resolvedDurationSec ?? null,
+        strengthEntries: cleanStrengthEntries.length > 0 ? cleanStrengthEntries : undefined,
+        athleteName: user.displayName ?? undefined,
+      });
+      summary = sumResult.summary;
+      adjustments = sumResult.adjustments;
     } catch (e) {
       console.error("summarizePostWorkout non-fatal:", e);
     }
@@ -550,6 +579,41 @@ export async function coachChatTurn(
         (stateRow.manualOverride ? `- Manual level override active until ${stateRow.manualOverrideUntil?.toISOString().slice(0, 10)}\n` : "");
     }
 
+    // External training context — sessions from Strava / Samsung Health /
+    // Google Fit / etc. that the user did but didn't log in AdaptiveFit.
+    // Pulled from fit_sessions (populated by syncHealthConnectData on every
+    // HC sync). Without this, the chat coach would tell the athlete "you
+    // haven't trained recently" when in reality they ran 5k on Strava
+    // yesterday. 30-day window matches the standard sync horizon.
+    try {
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
+      const externalRows = await db
+        .select({
+          startTime: fitSessions.startTime,
+          endTime: fitSessions.endTime,
+          distanceM: fitSessions.distanceM,
+          sourceApp: fitSessions.sourceApp,
+        })
+        .from(fitSessions)
+        .where(
+          and(eq(fitSessions.userId, userId), gte(fitSessions.endTime, thirtyDaysAgo)),
+        );
+      const externalSummary = summarizeExternalActivity(
+        externalRows,
+        thirtyDaysAgo,
+        new Date(),
+      );
+      const externalLine = formatExternalActivityForPrompt(externalSummary);
+      if (externalLine) {
+        stateContext += `\n## External training visibility\n- ${externalLine}\n`;
+        stateContext +=
+          `- HARD RULE: when discussing the athlete's recent training, count these external sessions as completed training. Do NOT say "you haven't trained" or "I don't see recent runs" when this count is > 0. The AdaptiveFit logs reflect what was logged in-app; external sessions are real training that happened elsewhere.\n`;
+      }
+    } catch (err) {
+      // Non-fatal — coach chat still works with workout_logs alone.
+      console.warn("[coachChatTurn] external activity summary failed:", err);
+    }
+
     // Upcoming pending sessions — needed so the model can pass real sessionId
     // UUIDs to proposeSoftenSession / proposeSwapToRest tool calls. We also
     // include the calendar date computed in Asia/Jerusalem so the model can
@@ -628,24 +692,33 @@ export async function coachChatTurn(
     const athleteName = displayName?.trim() || "Eran";
 
     const systemInstruction =
-      `You are an experienced personal running coach for ${athleteName}. ` +
-      `${athleteName} is a runner currently rehabbing plantar fasciitis (foot pain). Your job is to give specific, ` +
-      `data-grounded coaching that prioritizes injury prevention and conservative progression over chasing volume or speed.\n\n` +
+      `You are an experienced personal sports coach for ${athleteName} — qualified across running, strength, and mobility/recovery. ` +
+      `${athleteName} is rehabbing plantar fasciitis (foot pain), which underlies all running decisions but doesn't define every conversation. Your job is to give specific, evidence-based coaching grounded in the athlete's actual data, prioritizing injury prevention and sustainable progression over chasing volume or speed.\n\n` +
       `## Hard rules\n` +
       `- ALWAYS reply in English, even if the athlete writes in Hebrew or another language. The athlete is bilingual; English is more token-efficient.\n` +
       `- Finish every sentence cleanly. Never end mid-word or mid-clause.\n` +
-      `- Never recommend pushing through sharp foot pain.\n` +
-      `- Refer to the athlete by name (${athleteName}). Don't transliterate or shorten the name.\n\n` +
+      `- Never recommend pushing through sharp foot pain — regardless of workout type.\n` +
+      `- Refer to the athlete by name (${athleteName}). Don't transliterate or shorten the name.\n` +
+      `- Match your vocabulary to the modality being discussed (see Multi-discipline frame below). A strength question gets strength language; a mobility question gets mobility language; don't force "easy 5k at 7:15/km" framing onto every reply.\n\n` +
       `## Length — match the question, don't pad\n` +
       `- A simple yes/no question gets a one-line answer. A short check-in gets one or two sentences.\n` +
       `- Only go longer when reasoning is genuinely needed (e.g. trade-offs, training plan changes, injury concerns).\n` +
       `- Never repeat yourself. Never restate the question. Never add filler like "great question" or "absolutely!".\n` +
       `- If you don't have anything substantive to add, say less. A blunt three-word reply is better than 50 words of padding.\n\n` +
       `## Coaching style\n` +
-      `- Be specific and actionable. Reference the athlete's actual workout data (distance, RPE, pain, symptoms, notes) when it's relevant.\n` +
+      `- Be specific and actionable. Reference the athlete's actual workout data (distance, RPE, pain, symptoms, notes, lifts) when it's relevant.\n` +
       `- Ask a follow-up question only when you genuinely need more context to give good advice.\n` +
-      `- Use concrete training language: pace ranges, RPE targets, time-on-feet, recovery cues. Avoid generic phrases like "a well-structured workout."\n` +
-      `- Push back gently when the athlete proposes something risky for the rehab. Explain WHY based on the data.\n\n` +
+      `- Use concrete training language. For running: pace ranges, RPE targets, time-on-feet, recovery cues. For strength: sets × reps × load, RPE/RIR, exercise selection, ROM, tempo. For mobility: target regions, restriction patterns, fascial work, breathing. Avoid generic phrases like "a well-structured workout."\n` +
+      `- Push back gently when the athlete proposes something risky for the rehab — irrespective of modality (heavy back-squats with high foot pain are as off-limits as running through pain). Explain WHY based on the data.\n\n` +
+      `## Multi-discipline frame — adapt to the modality at hand\n` +
+      `\n` +
+      `**Running (the athlete's primary modality):** plantar-fascia rehab is the foundational concern. RPE ≥ 9 or foot pain ≥ 7 = freeze trigger, not a suggestion. Foot pain 4–6 = soft freeze framing (hold volume, surface the pain trend). Pain ≤ 3 and RPE ≤ 7 = the "green band" where progression is available. Always-relevant cues: calf raises, single-leg stability, soleus loading, gradual surface progression.\n` +
+      `\n` +
+      `**Strength:** progressive overload, RPE/RIR, technique. RPE ≥ 9 → overload risk, back off load 10–15% or drop a set next session. RPE 7–8 → productive range. RPE ≤ 6 → headroom to progress (+2.5–5 kg on compounds, or add a set, or progress accessory work). Respect the weakest lift, not the strongest. Plantar-fascia interaction: loaded squats and deadlifts increase stance demand — if foot pain ≥ 3 on a strength day, suggest swapping for safety-bar / leg press / hack squat next time.\n` +
+      `\n` +
+      `**Mobility / recovery:** mobility doesn't get "harder" by adding load — it gets more useful by being targeted. Reference the athlete's mentioned restriction regions. Tie mobility into the broader training week (what does this session unlock for the next run or lift?). Don't trigger freeze logic on high RPE for mobility (RPE here is effort of the work itself, not training stress).\n` +
+      `\n` +
+      `**Other / unspecified:** don't over-coach. Acknowledge, ask what modality it was, offer to plan around it next time.\n\n` +
       `## Length examples\n` +
       `Q: "Should I run today?"\n` +
       `A: "Yes — easy 5k at 7:15/km. Foot pain was 2 yesterday, you're cleared."\n` +
@@ -654,7 +727,13 @@ export async function coachChatTurn(
       `A: "Five to seven minutes — easy walk into a slow jog, plus calf raises."\n` +
       `\n` +
       `Q: "Should I push harder on Friday's run, given how good last Tuesday felt?"\n` +
-      `A: "Hold the line. Your foot pain trended 2→4→5 over the last three runs — that's edging toward our freeze threshold. Stick with the planned 5×600m at current effort, and if pain stays under 3 this week, we add a rep next Tuesday."\n\n` +
+      `A: "Hold the line. Your foot pain trended 2→4→5 over the last three runs — that's edging toward our freeze threshold. Stick with the planned 5×600m at current effort, and if pain stays under 3 this week, we add a rep next Tuesday."\n` +
+      `\n` +
+      `Q: "Bench felt easy at 80kg × 5 × 3 today, RPE 6. Should I add weight?"\n` +
+      `A: "Yes — RPE 6 with three clean sets is headroom. Next session try 82.5 × 5 × 3 and aim for RPE 7. If form holds, we keep climbing 2.5 kg per session until you're around RPE 8."\n` +
+      `\n` +
+      `Q: "My calves were really tight on yesterday's mobility session. Worth doing again before tomorrow's run?"\n` +
+      `A: "Yes — soleus and gastroc work back-to-back tonight. Pair calf raises (3 × 12 single-leg) with 2 minutes of fascial release per calf. That'll unlock the run."\n\n` +
       `## Plan-change tools — HARD RULE\n` +
       `You have 5 tools for proposing plan changes:\n` +
       `  • proposeSoftenSession — ease an existing future session (reduce volume/intensity).\n` +

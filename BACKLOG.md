@@ -112,25 +112,21 @@ never lags. Today, sync only runs on app-foreground.
 
 ---
 
-## Type-aware post-workout summary
+## Type-aware post-workout summary — RESOLVED 2026-05-25
 
-After Phase 8b.3 (strength logging UI) shipped, `summarizePostWorkout` is
-called only for `type === "run"` and skipped for strength/mobility/other,
-which use generic copy. The Gemini prompt is hardcoded as a "conservative
-running coach assistant" and would produce off-topic suggestions for the
-other types.
+Shipped as part of the coach prompt overhaul (Tier 2 #4). The post-workout
+summary now runs for all four workout types (run / strength / mobility /
+other) with a unified multi-discipline system prompt that adapts vocabulary
+to the modality (RPE/RIR for strength, ROM/restriction for mobility, etc.).
+The `if (type === "run")` gate in `logManualWorkout` was removed; type,
+distance/duration, strength entries, and athlete name now flow through to
+the prompt. Same overhaul applied to the chat coach (`coachChatTurn`)
+system prompt with type-aware sections and example exchanges per modality.
 
-**Pickup:**
-1. Refactor `lib/gemini/summarizePostWorkout.ts` to accept `type` and
-   `strengthEntries?: { exercise, weightKg, reps, sets }[]` as inputs.
-2. Branch the system prompt by type — "running coach" for runs,
-   "strength coach" for strength (use the entries as additional context),
-   "mobility/recovery coach" for mobility, generic for other.
-3. Remove the `if (type === "run")` gate in `logManualWorkout` so all
-   types get AI summaries again.
-4. Add tests pinning the summary prompt for each type.
-
-Effort: ~1h.
+Files touched:
+- `lib/gemini/summarizePostWorkout.ts` (rewritten — multi-discipline prompt + extended input type)
+- `app/(app)/home/actions.ts` (removed gate, pass new inputs; chat-coach prompt enhanced)
+- `tests/gemini/summarizePostWorkout.test.ts` (new)
 
 ---
 

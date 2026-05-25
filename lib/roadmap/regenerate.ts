@@ -1,9 +1,10 @@
 import { db } from "@/lib/db";
-import { trainingRoadmap, workoutLogs, userLevelState, goals } from "@/lib/db/schema";
+import { trainingRoadmap, workoutLogs, userLevelState, goals, fitSessions } from "@/lib/db/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
 import type { CoachInputs, GoalCategory } from "@/lib/coach";
 import { periodize } from "@/lib/coach/periodize";
+import { summarizeExternalActivity } from "@/lib/coach/externalActivity";
 
 /**
  * Core regeneration logic — shared between the roadmap server action and
@@ -30,6 +31,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
 
   const last8Weeks = new Date();
   last8Weeks.setDate(last8Weeks.getDate() - 56);
+  const last30Days = new Date(Date.now() - 30 * 86_400_000);
 
   const [recentLogs, stateRow, allActiveGoals] = await Promise.all([
     db
@@ -47,6 +49,28 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
       .where(and(eq(goals.userId, userId), eq(goals.status, "active")))
       .orderBy(desc(goals.createdAt)),
   ]);
+
+  // External sessions for FSM visibility — same 30d window the chat coach
+  // uses. evaluateCoach doesn't change plan logic on this signal, but it
+  // surfaces a rules_applied audit entry per call so we can tell whether
+  // the FSM had context. Non-fatal: regen still runs with workout_logs alone.
+  // Run after the main Promise.all so a fit_sessions query failure doesn't
+  // reject the whole batch.
+  let externalActivity: ReturnType<typeof summarizeExternalActivity> | undefined;
+  try {
+    const externalRows = await db
+      .select({
+        startTime: fitSessions.startTime,
+        endTime: fitSessions.endTime,
+        distanceM: fitSessions.distanceM,
+        sourceApp: fitSessions.sourceApp,
+      })
+      .from(fitSessions)
+      .where(and(eq(fitSessions.userId, userId), gte(fitSessions.endTime, last30Days)));
+    externalActivity = summarizeExternalActivity(externalRows, last30Days, new Date());
+  } catch (err) {
+    console.warn("[regenerateRoadmap] external activity summary failed:", err);
+  }
 
   // R3: Pick primary goal — running takes precedence (runner-first product), else most recent
   const CATEGORY_PRIORITY: Record<string, number> = { running: 0, weight_loss: 1, body_shape: 2, strength: 3 };
@@ -94,6 +118,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
         sessionKind: "quality",
         goalCategory,
         periodize: { volumeMultiplier: pd.volumeMultiplier, levelOffset: pd.levelOffset },
+        externalActivity,
       });
       sessionsToCreate.push({
         userId,
@@ -117,6 +142,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
         sessionKind: "endurance",
         goalCategory,
         periodize: { volumeMultiplier: pd.volumeMultiplier, levelOffset: pd.levelOffset },
+        externalActivity,
       });
       sessionsToCreate.push({
         userId,
