@@ -344,6 +344,7 @@ export async function logManualWorkout(input: {
           endTime: fitSessions.endTime,
           distanceM: fitSessions.distanceM,
           sourceApp: fitSessions.sourceApp,
+          userClassification: fitSessions.userClassification,
         })
         .from(fitSessions)
         .where(
@@ -602,10 +603,12 @@ export async function coachChatTurn(
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
       const externalRows = await db
         .select({
+          id: fitSessions.id,
           startTime: fitSessions.startTime,
           endTime: fitSessions.endTime,
           distanceM: fitSessions.distanceM,
           sourceApp: fitSessions.sourceApp,
+          userClassification: fitSessions.userClassification,
         })
         .from(fitSessions)
         .where(
@@ -628,12 +631,18 @@ export async function coachChatTurn(
         }
         stateContext +=
           `\n### How to talk about external sessions\n` +
-          `- These are visible to you so you don't tell ${athleteName} "you haven't trained" when there IS recent activity.\n` +
-          `- BUT not every external session is a training session. Each one carries a "likely training" or "likely activity" label above based on duration + distance.\n` +
-          `  • "likely training": ≥30 min OR ≥3 km — treat as a real session. Refer to it as the workout type (e.g., "your 6km run yesterday").\n` +
-          `  • "likely activity": short / low-volume — a walk to the cafe, a quick errand. Do NOT call this "training" or "a session". Refer to it as "a walk" or "some activity" if you mention it at all.\n` +
-          `- If the only recent thing is a "likely activity" session and ${athleteName} asks about training: be honest. "Your last training session was the strength workout on May 24. You also went for a walk this morning." Don't conflate the two.\n` +
-          `- If ${athleteName} disagrees with the classification ("that walk WAS my recovery"), accept it and offer to log it as an AdaptiveFit workout so the coach treats it as training going forward.\n`;
+          `Each session above carries a label inferred from duration, distance, pace, and source app:\n` +
+          `  • **labelled training** — the athlete already confirmed this was a workout. Count it.\n` +
+          `  • **labelled activity** — the athlete already confirmed this was NOT a workout. Do not call it training.\n` +
+          `  • **likely training** — auto-classified (running pace / long distance / long duration / intentional Strava recording). Treat as a real session.\n` +
+          `  • **likely activity** — auto-classified (short, slow, or no-distance non-Strava session). Treat as casual, not training.\n` +
+          `  • **AMBIGUOUS — please clarify** — the auto classifier wasn't confident. ASK the athlete whether it was training or activity, and persist their answer with the classifySession tool (see Plan-change tools below). Carry the id from "[id=<uuid>]" verbatim — do NOT invent it.\n` +
+          `\n` +
+          `### Rules for using this data:\n` +
+          `- Do not tell ${athleteName} "you haven't trained" when training-labelled sessions exist in the list above.\n` +
+          `- Do not call activity-labelled or "likely activity" sessions "training" or "a session" — call them "a walk" or "some activity" if you mention them at all.\n` +
+          `- When at least one AMBIGUOUS session exists AND ${athleteName} hasn't already addressed it in this thread, proactively ask about the most recent one at the start of your reply. Example: "Before I answer — I saw a 4.2km / 48min session from Samsung Health yesterday afternoon. Was that training or a casual walk?" Then on their reply, call classifySession({sessionId, classification}) — applies immediately, no Approve card.\n` +
+          `- If ${athleteName} disagrees with an automatic label (e.g., "that walk WAS my recovery"), accept it and call classifySession to flip the label.\n`;
       }
     } catch (err) {
       // Non-fatal — coach chat still works with workout_logs alone.
@@ -869,7 +878,43 @@ export async function coachChatTurn(
       .returning({ id: coachChatMessages.id });
 
     if (savedAssistant && functionCalls.length > 0) {
-      const rows = functionCalls
+      // Split out `classifySession` calls first — those apply IMMEDIATELY
+      // (the athlete IS the source of truth on whether a session was
+      // training, so no Approve/Decline gate). Everything else (proposeX)
+      // goes through the standard pending-action path.
+      const classifyCalls = functionCalls.filter((fc) => fc.name === "classifySession");
+      const proposeCalls = functionCalls.filter((fc) => fc.name !== "classifySession");
+
+      // Apply classifications inline.
+      for (const fc of classifyCalls) {
+        const args = fc.args as { sessionId?: unknown; classification?: unknown };
+        const sessionId = typeof args.sessionId === "string" ? args.sessionId : null;
+        const classification =
+          args.classification === "training" || args.classification === "activity"
+            ? args.classification
+            : null;
+        if (!sessionId || !classification) {
+          console.warn("[coachChatTurn] classifySession with bad args:", fc.args);
+          continue;
+        }
+        try {
+          // Ownership-scoped update — guards against Gemini hallucinating
+          // a sessionId that doesn't belong to this user.
+          await db
+            .update(fitSessions)
+            .set({ userClassification: classification })
+            .where(and(eq(fitSessions.id, sessionId), eq(fitSessions.userId, userId)));
+        } catch (e) {
+          console.warn("[coachChatTurn] classifySession update failed:", e);
+        }
+      }
+      if (classifyCalls.length > 0) {
+        revalidatePath("/home");
+        revalidatePath("/analytics");
+      }
+
+      // Map propose* calls to coach_chat_actions rows (pending).
+      const rows = proposeCalls
         .map((fc) => {
           const actionType = functionNameToActionType(fc.name);
           if (!actionType) return null;

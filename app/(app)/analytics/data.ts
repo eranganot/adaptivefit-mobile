@@ -13,6 +13,7 @@ import { db } from "@/lib/db";
 import { workoutLogs, userLevelState, users, fitDailyMetrics, fitSessions, goals, bodyMetrics, strengthLogs } from "@/lib/db/schema";
 import { eq, sql, and, gte, asc } from "drizzle-orm";
 import { sundayOfWeekIL, sundayNWeeksAgo, toILDateString, weekLabel } from "@/lib/analytics/week";
+import { classifySessionSmart } from "@/lib/coach/externalActivity";
 
 export type WeeklyBucket = {
   week: string; // "DD Mon" label
@@ -203,22 +204,28 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
 
   // ── A3 supplement: per-day active minutes from external HC sessions
   //
-  // Pull raw fit_sessions and bucket by Asia/Jerusalem date — same TZ the
-  // workout_logs query above uses. This matters because:
-  //   1. Without TZ alignment, a workout logged at 22:00 IL (= 19:00 UTC)
-  //      lands in different day buckets in the two sources and the merge
-  //      misattributes activity.
-  //   2. Reading directly from fit_sessions (not the cached
-  //      fit_daily_metrics.active_minutes) gives us the raw durations to
-  //      apply per-day dedup logic against workout_logs.
+  // Pulls raw fit_sessions and applies the user-classification + auto
+  // classifier in JS, then buckets by Asia/Jerusalem date (matches the
+  // workout_logs query above so the merge keys align).
   //
-  // Sum durations per IL day. Sessions that span IL midnight are bucketed
-  // by their start day (simpler; multi-day sessions are rare and approximate
-  // bucketing is fine for the chart).
-  const fitSessionsForActivity = await db
+  // Inclusion rule for the chart:
+  //   - user_classification = 'training' → count it
+  //   - user_classification = 'activity' → exclude (user said it wasn't training)
+  //   - user_classification = NULL → run the auto classifier:
+  //       * clearly_training → count
+  //       * clearly_activity or ambiguous → exclude
+  //
+  // Ambiguous sessions are excluded from the chart until the user labels
+  // them via the Home card / chat coach prompt. Bias: prefer empty bar
+  // over inflated bar; the user can always add an AF log to put a real
+  // workout on the chart if the auto classifier missed it.
+  const fitSessionsRaw = await db
     .select({
-      day: sql<string>`DATE(${fitSessions.startTime} AT TIME ZONE 'Asia/Jerusalem')::text`,
-      durationSec: sql<number>`SUM(EXTRACT(EPOCH FROM (${fitSessions.endTime} - ${fitSessions.startTime})))::int`,
+      startTime: fitSessions.startTime,
+      endTime: fitSessions.endTime,
+      distanceM: fitSessions.distanceM,
+      sourceApp: fitSessions.sourceApp,
+      userClassification: fitSessions.userClassification,
     })
     .from(fitSessions)
     .where(
@@ -226,8 +233,42 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
         eq(fitSessions.userId, user.id),
         gte(fitSessions.startTime, twentyEightDaysAgo),
       ),
-    )
-    .groupBy(sql`DATE(${fitSessions.startTime} AT TIME ZONE 'Asia/Jerusalem')`);
+    );
+
+  // Apply classification filter + bucket by IL date.
+  const fitSessionsForActivity: { day: string; durationSec: number }[] = [];
+  const _fitByDay = new Map<string, number>();
+  for (const s of fitSessionsRaw) {
+    const durationSec = Math.max(
+      0,
+      Math.round((s.endTime.getTime() - s.startTime.getTime()) / 1000),
+    );
+    if (durationSec <= 0) continue;
+    // User-classification overrides the auto classifier.
+    let include = false;
+    if (s.userClassification === "training") {
+      include = true;
+    } else if (s.userClassification === "activity") {
+      include = false;
+    } else {
+      const cls = classifySessionSmart({
+        durationSec,
+        distanceM: s.distanceM,
+        sourceApp: s.sourceApp,
+      });
+      include = cls.bucket === "clearly_training";
+    }
+    if (!include) continue;
+
+    // Bucket by Asia/Jerusalem date.
+    const ilDay = s.startTime.toLocaleDateString("en-CA", {
+      timeZone: "Asia/Jerusalem",
+    }); // YYYY-MM-DD
+    _fitByDay.set(ilDay, (_fitByDay.get(ilDay) ?? 0) + durationSec);
+  }
+  for (const [day, durationSec] of _fitByDay) {
+    fitSessionsForActivity.push({ day, durationSec });
+  }
 
   // Shape weekly buckets — exact Sunday-key matching, no fuzzy window
   // SQL returns "YYYY-MM-DD" strings (Sunday dates in Israel timezone)

@@ -144,6 +144,37 @@ export const COACH_CHAT_TOOLS: Tool[] = [
         },
       },
       {
+        name: "classifySession",
+        description:
+          "Persist the athlete's classification of an external Health Connect " +
+          "session as either training (counts toward the chart, coach treats as " +
+          "a workout) or activity (excluded from training totals — casual walks, " +
+          "errands, etc). UNLIKE the propose* tools, this APPLIES IMMEDIATELY — " +
+          "the athlete IS the source of truth on whether a session was training, " +
+          "so no Approve/Decline gate. Use this when the athlete clearly answers " +
+          "an ambiguous session prompt (e.g., 'yes that was a workout' or 'no, " +
+          "just a walk to the cafe'). If the athlete is unclear, ask a follow-up " +
+          "rather than guessing.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            sessionId: {
+              type: SchemaType.STRING,
+              description:
+                "UUID of the fit_sessions row from the 'AMBIGUOUS' lines in the " +
+                "External sessions context above. Do NOT invent IDs.",
+            },
+            classification: {
+              type: SchemaType.STRING,
+              description:
+                "Either 'training' or 'activity'. The athlete's actual answer.",
+              enum: ["training", "activity"],
+            },
+          },
+          required: ["sessionId", "classification"],
+        },
+      },
+      {
         name: "proposeAddSession",
         description:
           "Propose ADDING a NEW session to the roadmap on a specific future date. Use when " +

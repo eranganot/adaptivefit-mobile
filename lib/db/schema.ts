@@ -443,6 +443,16 @@ export const fitSessions = pgTable(
     // (e.g. "com.strava", "com.google.android.apps.fitness").
     // Null for legacy Google Fit rows.
     sourceApp: text("source_app"),
+    // Phase 8b polish — user's classification of this session as a real
+    // workout or casual activity. The auto classifier in
+    // lib/coach/externalActivity.ts handles obvious cases (running pace
+    // → training, slow short walk → activity); the ambiguous middle band
+    // surfaces on Home + in the chat coach for the user to label. Once
+    // set, the chart + FSM + coach respect this value over the auto
+    // bucket. NULL = not yet labeled by the user.
+    userClassification: text("user_classification", {
+      enum: ["training", "activity"],
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

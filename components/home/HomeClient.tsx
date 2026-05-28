@@ -15,6 +15,8 @@ import PostWorkout from "./PostWorkout";
 import Analyzing from "./Analyzing";
 import DoneState from "./DoneState";
 import { ColdStartReviewModal } from "@/components/coldstart/ColdStartReviewModal";
+import { PendingClassificationsCard } from "./PendingClassificationsCard";
+import type { PendingClassification } from "@/app/(app)/home/sessionClassificationActions";
 import dynamic from "next/dynamic";
 
 // Lazy-load GPS-heavy screens — they import mapbox which is large
@@ -65,6 +67,10 @@ export interface HomeClientProps {
   nextSession: { title: string; date: Date; plan: SessionPlan } | null;
   lastChatMessages: { role: string; content: string }[];
   pendingColdStart: { id: string; recommendedLevel: number; rationale: string } | null;
+  /** External HC sessions awaiting user classification (training vs activity).
+   *  Shown as the PendingClassificationsCard in pre-workout state. Defaults to
+   *  empty array on the server so consumers without HC sessions don't break. */
+  pendingClassifications?: PendingClassification[];
 }
 
 export default function HomeClient({
@@ -84,6 +90,7 @@ export default function HomeClient({
   nextSession,
   lastChatMessages,
   pendingColdStart: initialPendingColdStart,
+  pendingClassifications = [],
 }: HomeClientProps) {
   const [state, setState] = useState<HomeState>("pre-workout");
   const [workoutResult, setWorkoutResult] = useState<WorkoutResult | null>(null);
@@ -303,21 +310,28 @@ export default function HomeClient({
       />
 
       {state === "pre-workout" && (
-        <PreWorkout
-          name={name}
-          greetingKey={greetingKey}
-          todayPlan={todayPlan}
-          todayPlanIsFromRoadmap={todayPlanIsFromRoadmap}
-          todayPlanDate={todayPlanDate}
-          loggedToday={loggedToday}
-          todayLogCount={todayLogCount}
-          aiSummary={aiSummary}
-          onLogManual={handleLogManual}
-          onStartRun={handleStartRun}
-          fitYesterday={fitYesterday}
-          nextSession={nextSession}
-          lastChatMessages={lastChatMessages}
-        />
+        <>
+          {/* Pending external-session classifications. Renders only if there
+              are any — invisible on quiet days. */}
+          {pendingClassifications.length > 0 && (
+            <PendingClassificationsCard pending={pendingClassifications} />
+          )}
+          <PreWorkout
+            name={name}
+            greetingKey={greetingKey}
+            todayPlan={todayPlan}
+            todayPlanIsFromRoadmap={todayPlanIsFromRoadmap}
+            todayPlanDate={todayPlanDate}
+            loggedToday={loggedToday}
+            todayLogCount={todayLogCount}
+            aiSummary={aiSummary}
+            onLogManual={handleLogManual}
+            onStartRun={handleStartRun}
+            fitYesterday={fitYesterday}
+            nextSession={nextSession}
+            lastChatMessages={lastChatMessages}
+          />
+        </>
       )}
 
       {state === "active-run" && (

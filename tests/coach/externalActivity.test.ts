@@ -16,6 +16,7 @@ import {
   summarizeExternalActivity,
   formatExternalActivityForPrompt,
   formatRecentSessionsForPrompt,
+  classifySessionSmart,
 } from "@/lib/coach/externalActivity";
 
 type Sess = {
@@ -370,5 +371,132 @@ describe("formatRecentSessionsForPrompt — training vs activity classification"
 
   it("empty input → empty array", () => {
     expect(formatRecentSessionsForPrompt([], NOW, 3)).toEqual([]);
+  });
+});
+
+describe("classifySessionSmart — rules table", () => {
+  // Each row is one rule from the externalActivity.ts header comment.
+  // If you add a rule there, add a test here. If you change a threshold,
+  // update both.
+
+  // ── Training band ───────────────────────────────────────────────
+  it("rule 1: running pace < 8 min/km → clearly_training", () => {
+    // 6 min/km = 30 min over 5 km
+    const r = classifySessionSmart({ durationSec: 30 * 60, distanceM: 5000, sourceApp: null });
+    expect(r.bucket).toBe("clearly_training");
+    expect(r.reason).toContain("pace");
+  });
+
+  it("rule 2: distance ≥ 8 km → clearly_training (even at walking pace)", () => {
+    // 2 hours, 10 km = 12 min/km
+    const r = classifySessionSmart({ durationSec: 120 * 60, distanceM: 10000, sourceApp: null });
+    expect(r.bucket).toBe("clearly_training");
+    expect(r.reason).toContain("distance");
+  });
+
+  it("rule 3: duration ≥ 90 min → clearly_training (even no distance)", () => {
+    const r = classifySessionSmart({ durationSec: 95 * 60, distanceM: null, sourceApp: null });
+    expect(r.bucket).toBe("clearly_training");
+    expect(r.reason).toContain("duration");
+  });
+
+  it("rule 4: Strava + ≥ 20 min + ≥ 2 km → clearly_training", () => {
+    // 25 min over 3 km = 8.3 min/km (just over running threshold but Strava-intentional)
+    const r = classifySessionSmart({
+      durationSec: 25 * 60,
+      distanceM: 3000,
+      sourceApp: "com.strava",
+    });
+    expect(r.bucket).toBe("clearly_training");
+    expect(r.reason).toContain("Strava");
+  });
+
+  it("rule 4 inverse: Strava but under 20 min → falls through to ambiguous", () => {
+    const r = classifySessionSmart({
+      durationSec: 18 * 60,
+      distanceM: 1500,
+      sourceApp: "com.strava",
+    });
+    expect(r.bucket).toBe("ambiguous");
+  });
+
+  // ── Activity band ──────────────────────────────────────────────
+  it("rule 5: duration < 15 min → clearly_activity", () => {
+    const r = classifySessionSmart({ durationSec: 10 * 60, distanceM: 1000, sourceApp: null });
+    expect(r.bucket).toBe("clearly_activity");
+    expect(r.reason).toContain("short");
+  });
+
+  it("rule 6: slow + short → clearly_activity (the original bug case)", () => {
+    // 1.08 km in 24 min = 22 min/km. The user's morning walk.
+    const r = classifySessionSmart({
+      durationSec: 24 * 60,
+      distanceM: 1080,
+      sourceApp: "com.sec.android.app.shealth",
+    });
+    expect(r.bucket).toBe("clearly_activity");
+    expect(r.reason).toContain("slow");
+  });
+
+  it("rule 7: no distance + short + non-Strava → clearly_activity", () => {
+    const r = classifySessionSmart({
+      durationSec: 20 * 60,
+      distanceM: null,
+      sourceApp: "com.sec.android.app.shealth",
+    });
+    expect(r.bucket).toBe("clearly_activity");
+    expect(r.reason).toContain("no distance");
+  });
+
+  it("rule 7 inverse: no distance + short + Strava → ambiguous (not activity)", () => {
+    // Strava can record HIIT/yoga sessions without distance; respect the intent
+    const r = classifySessionSmart({
+      durationSec: 25 * 60,
+      distanceM: null,
+      sourceApp: "com.strava",
+    });
+    expect(r.bucket).toBe("ambiguous");
+  });
+
+  // ── Ambiguous band — the cases that prompt the user ────────────
+  it("rule 8: 30 min, 3 km brisk walk → ambiguous (user's explicit example)", () => {
+    const r = classifySessionSmart({ durationSec: 30 * 60, distanceM: 3000, sourceApp: null });
+    expect(r.bucket).toBe("ambiguous");
+  });
+
+  it("rule 8: 45 min, 4 km walk → ambiguous (user pushback case)", () => {
+    const r = classifySessionSmart({ durationSec: 45 * 60, distanceM: 4000, sourceApp: null });
+    expect(r.bucket).toBe("ambiguous");
+  });
+
+  it("rule 8: 60 min, 5 km leisurely → ambiguous", () => {
+    const r = classifySessionSmart({ durationSec: 60 * 60, distanceM: 5000, sourceApp: null });
+    expect(r.bucket).toBe("ambiguous");
+  });
+
+  // ── Boundary tests ─────────────────────────────────────────────
+  it("boundary: pace exactly 8 min/km → ambiguous (rule is < 8)", () => {
+    const r = classifySessionSmart({ durationSec: 24 * 60, distanceM: 3000, sourceApp: null });
+    expect(r.bucket).toBe("ambiguous");
+  });
+
+  it("boundary: pace just under 8 min/km → clearly_training", () => {
+    const r = classifySessionSmart({
+      durationSec: Math.round(7.9 * 60 * 3),
+      distanceM: 3000,
+      sourceApp: null,
+    });
+    expect(r.bucket).toBe("clearly_training");
+  });
+
+  it("boundary: distance exactly 8 km → clearly_training (rule is >=)", () => {
+    const r = classifySessionSmart({ durationSec: 120 * 60, distanceM: 8000, sourceApp: null });
+    expect(r.bucket).toBe("clearly_training");
+  });
+
+  it("reason field is human-readable + includes actual values", () => {
+    const r = classifySessionSmart({ durationSec: 24 * 60, distanceM: 1080, sourceApp: null });
+    expect(r.reason).toMatch(/\d/); // contains a number
+    expect(r.reason).toMatch(/[a-z]/i); // contains words
   });
 });

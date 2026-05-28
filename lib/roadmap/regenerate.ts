@@ -64,6 +64,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
         endTime: fitSessions.endTime,
         distanceM: fitSessions.distanceM,
         sourceApp: fitSessions.sourceApp,
+        userClassification: fitSessions.userClassification,
       })
       .from(fitSessions)
       .where(and(eq(fitSessions.userId, userId), gte(fitSessions.endTime, last30Days)));

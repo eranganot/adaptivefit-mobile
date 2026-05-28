@@ -24,12 +24,21 @@
  * than FitSession (only the fields these helpers actually read) and
  * permissive on the date fields. The internal normalizers handle either
  * shape safely.
+ *
+ * `userClassification` reflects what the user explicitly labelled this
+ * session as (via the Home card or chat coach). Null means the user
+ * hasn't classified — fall back to the auto classifier.
  */
 export type SessionInput = {
+  /** Optional — when present, surfaces in the per-session prompt line as
+   *  `id=<uuid>`. Required when the chat coach is expected to call
+   *  classifySession() with a specific row. */
+  id?: string;
   startTime: Date | string;
   endTime: Date | string;
   distanceM: number | null;
   sourceApp: string | null;
+  userClassification?: "training" | "activity" | null;
 };
 
 /**
@@ -125,27 +134,121 @@ const SOURCE_APP_LABELS: Record<string, string> = {
 };
 
 /**
- * Categorize a session as likely training vs likely casual activity.
+ * Three-bucket auto-classification of an external session as training,
+ * casual activity, or ambiguous (= ask the user).
  *
- * Heuristic only — HC doesn't expose user intent. Bias: prefer false
- * "activity" (under-claim training) over false "training" (over-claim).
- * The coach is allowed to ask the user to clarify if it's ambiguous.
+ * Inputs available: duration, distance, source app. NOT GPS route (Strava
+ * doesn't expose polyline data via Health Connect), NOT heart rate (plugin
+ * doesn't register HeartRate yet). With these constraints the safe
+ * approach is: classify only the obvious cases, defer the ambiguous middle
+ * to a user prompt rather than guessing wrong.
  *
- * Rules:
- *   - Sessions ≥ 30 min OR ≥ 3 km of distance → "training"
- *   - Otherwise → "activity" (e.g., a short walk to the cafe)
+ * Bias: false "ambiguous" is fine (the user will get one prompt); false
+ * "training" is bad (inflates training-volume signals to the coach +
+ * chart); false "activity" is bad (hides real training the user did
+ * externally). So we keep the auto-classified buckets narrow and let the
+ * ambiguous band be wide.
  *
- * The threshold is intentionally generous on the training side: a 28-min
- * easy 4km run is training; a 15-min stroll is activity. If the user
- * pushes back ("that 2km walk WAS my recovery session"), they can log
- * an AF workout for it and the chat coach will see the AF log next time.
+ * Rules in evaluation order (first match wins). See externalActivity.test.ts
+ * for the worked-example table.
+ *
+ *   training:
+ *     1. pace < 8 min/km — running pace, unambiguous
+ *     2. distance ≥ 8 km — long sustained effort regardless of pace
+ *     3. duration ≥ 90 min — long session regardless of pace
+ *     4. source = Strava AND ≥ 20 min AND ≥ 2 km — Strava only records on
+ *        manual press, so a non-trivial Strava session is intentional
+ *
+ *   activity:
+ *     5. duration < 15 min — too short to be training
+ *     6. pace > 14 min/km AND distance < 5 km — slow + short = errand
+ *     7. no distance AND duration < 30 min AND source != Strava — no
+ *        tracking intent on a short non-Strava session
+ *
+ *   ambiguous (= ask):
+ *     8. everything else — brisk walks, mid-length casual jogs, hikes
  */
-function classifySession(durationSec: number, distanceM: number | null): "training" | "activity" {
-  const minutes = durationSec / 60;
-  const km = distanceM != null && distanceM > 0 ? distanceM / 1000 : 0;
-  if (minutes >= 30 || km >= 3) return "training";
-  return "activity";
+export type AutoClassification = "clearly_training" | "clearly_activity" | "ambiguous";
+
+export type ClassificationResult = {
+  bucket: AutoClassification;
+  /** Human-readable reason — used in logs, tooltips, and the chat coach's
+   *  explanation when it asks the user about an ambiguous session. */
+  reason: string;
+};
+
+export function classifySessionSmart(input: {
+  durationSec: number;
+  distanceM: number | null;
+  sourceApp: string | null;
+}): ClassificationResult {
+  const minutes = input.durationSec / 60;
+  const km =
+    input.distanceM != null && input.distanceM > 0 ? input.distanceM / 1000 : 0;
+  const paceMinPerKm = km > 0 ? minutes / km : null;
+  const isStrava = input.sourceApp === "com.strava";
+
+  // ── Training band ─────────────────────────────────────────────────
+  if (paceMinPerKm !== null && paceMinPerKm < 8) {
+    return {
+      bucket: "clearly_training",
+      reason: `running pace (${paceMinPerKm.toFixed(1)} min/km)`,
+    };
+  }
+  if (km >= 8) {
+    return {
+      bucket: "clearly_training",
+      reason: `long distance (${km.toFixed(1)} km)`,
+    };
+  }
+  if (minutes >= 90) {
+    return {
+      bucket: "clearly_training",
+      reason: `long duration (${Math.round(minutes)} min)`,
+    };
+  }
+  if (isStrava && minutes >= 20 && km >= 2) {
+    return {
+      bucket: "clearly_training",
+      reason: `Strava session (intentional logging), ${Math.round(minutes)} min, ${km.toFixed(1)} km`,
+    };
+  }
+
+  // ── Activity band ────────────────────────────────────────────────
+  if (minutes < 15) {
+    return {
+      bucket: "clearly_activity",
+      reason: `too short (${Math.round(minutes)} min)`,
+    };
+  }
+  if (paceMinPerKm !== null && paceMinPerKm > 14 && km < 5) {
+    return {
+      bucket: "clearly_activity",
+      reason: `slow pace and short distance (${paceMinPerKm.toFixed(1)} min/km, ${km.toFixed(2)} km)`,
+    };
+  }
+  if (km === 0 && minutes < 30 && !isStrava) {
+    return {
+      bucket: "clearly_activity",
+      reason: `no distance, short duration (${Math.round(minutes)} min), non-intentional source`,
+    };
+  }
+
+  // ── Ambiguous — defer to the user ─────────────────────────────────
+  const parts: string[] = [`${Math.round(minutes)} min`];
+  if (km > 0) parts.push(`${km.toFixed(2)} km`);
+  if (paceMinPerKm !== null) parts.push(`${paceMinPerKm.toFixed(1)} min/km`);
+  if (input.sourceApp) parts.push(`source=${input.sourceApp}`);
+  return {
+    bucket: "ambiguous",
+    reason: `borderline (${parts.join(", ")})`,
+  };
 }
+
+// Older binary classifier removed — all callers migrated to
+// `classifySessionSmart`'s 3-bucket result. The formatter function below
+// inlines the 3-bucket → label mapping it needs (likely training /
+// likely activity / AMBIGUOUS).
 
 /** Format a session start as "today HH:MM" / "yesterday HH:MM" / "Mon 14 Apr HH:MM"
  *  in Asia/Jerusalem time, so the coach can be unambiguous about timing. */
@@ -197,10 +300,32 @@ export function formatRecentSessionsForPrompt(
     const durationSec = (end.getTime() - start.getTime()) / 1000;
     const durationMin = Math.round(durationSec / 60);
     const km = s.distanceM != null && s.distanceM > 0 ? s.distanceM / 1000 : null;
-    const classification = classifySession(durationSec, s.distanceM ?? null);
+    // Label priority: user_classification > auto classifier.
+    // - user labelled training → "labelled training"
+    // - user labelled activity → "labelled activity"
+    // - no label, auto says clearly_training → "likely training"
+    // - no label, auto says clearly_activity → "likely activity"
+    // - no label, auto says ambiguous → "AMBIGUOUS — please clarify"
+    //   (the chat coach uses this signal to ask the user)
+    let label: string;
+    if (s.userClassification === "training") label = "labelled training";
+    else if (s.userClassification === "activity") label = "labelled activity";
+    else {
+      const auto = classifySessionSmart({
+        durationSec,
+        distanceM: s.distanceM ?? null,
+        sourceApp: s.sourceApp ?? null,
+      });
+      if (auto.bucket === "clearly_training") label = "likely training";
+      else if (auto.bucket === "clearly_activity") label = "likely activity";
+      else label = "AMBIGUOUS — please clarify";
+    }
     const sourceLabel = SOURCE_APP_LABELS[s.sourceApp ?? "unknown"] ?? s.sourceApp ?? "unknown";
     const distancePart = km != null ? `, ${km.toFixed(2)} km` : "";
-    return `${formatSessionStart(start, new Date(now))} — ${durationMin} min${distancePart} (${sourceLabel}, likely ${classification})`;
+    // Include the UUID so the chat coach can call classifySession({sessionId})
+    // on ambiguous rows. Hidden when no id (legacy tests, etc.).
+    const idPart = s.id ? ` [id=${s.id}]` : "";
+    return `${formatSessionStart(start, new Date(now))} — ${durationMin} min${distancePart} (${sourceLabel}, ${label})${idPart}`;
   });
 }
 

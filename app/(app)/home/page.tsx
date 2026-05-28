@@ -7,6 +7,7 @@ import { evaluateCoach } from "@/lib/coach";
 import type { GoalCategory, SessionPlan } from "@/lib/coach";
 import HomeClient from "@/components/home/HomeClient";
 import { getPendingColdStart, ensureColdStartExists } from "./coldStartActions";
+import { getPendingClassifications } from "./sessionClassificationActions";
 
 export default async function HomePage() {
   const session = await auth();
@@ -167,6 +168,12 @@ export default async function HomePage() {
     console.error("fitYesterday non-fatal:", e);
   }
 
+  // Pending external-session classifications (Strava/Samsung Health walks
+  // that the auto classifier flagged as ambiguous). The Home card prompts
+  // the user to label each as training or activity. Non-fatal — empty list
+  // if anything in the query fails; Home still renders.
+  const pendingClassifications = await getPendingClassifications().catch(() => []);
+
   return (
     <HomeClient
       name={name}
@@ -185,6 +192,7 @@ export default async function HomePage() {
       nextSession={nextSession}
       lastChatMessages={lastChatMessages}
       pendingColdStart={pendingColdStart}
+      pendingClassifications={pendingClassifications}
     />
   );
 }
