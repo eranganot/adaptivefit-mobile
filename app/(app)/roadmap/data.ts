@@ -173,6 +173,13 @@ export async function getRoadmapData(userId: string): Promise<{
     ];
   }
 
+  // Sort chronologically. The SQL ordered by (weekIndex, dayIndex) which is
+  // chronological for the planned-roadmap rows, but past "adjusted" /
+  // "completed" rows survived the filter AND the synthetic today-rest card
+  // was prepended unconditionally — both of which can land out of date
+  // order. A flat sort by date at the end is the simplest correct fix.
+  sessions.sort((a, b) => a.date.getTime() - b.date.getTime());
+
   return {
     sessions,
     weekIndex,
