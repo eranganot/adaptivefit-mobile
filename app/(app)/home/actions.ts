@@ -835,7 +835,18 @@ export async function coachChatTurn(
         }
       }
 
-      reply = res.response.text().trim();
+      // Extract text defensively — the @google/generative-ai SDK's .text()
+      // can throw "The response contains no text" when the candidate is a
+      // pure function-call response (no text parts). Catching here lets us
+      // fall through to the function-call-aware fallback below instead of
+      // surfacing "Coach service is temporarily unavailable" to the user
+      // for a legitimate tool-only reply.
+      try {
+        reply = res.response.text().trim();
+      } catch (textErr) {
+        console.warn("coachChatTurn .text() threw (probably function-call-only response):", textErr);
+        reply = "";
+      }
 
       // Structured log so Railway tells us exactly what came back if anything
       // looks off in production.
@@ -850,10 +861,30 @@ export async function coachChatTurn(
       if (!reply && functionCalls.length === 0) {
         return { error: "Coach returned empty reply", code: "gemini" };
       }
-      // If the coach only emitted a function call without text, synthesize a
-      // brief stand-in so the user sees something readable above the proposal card.
+      // If the coach emitted only function calls without text, synthesize a
+      // stand-in that ACCURATELY describes what the tool does — splitting
+      // by tool family so the user isn't told to look for a card that
+      // doesn't exist (classifySession applies immediately, no card).
       if (!reply && functionCalls.length > 0) {
-        reply = "I'd like to propose a plan change — see the card below.";
+        const hasClassify = functionCalls.some((f) => f.name === "classifySession");
+        const hasPropose = functionCalls.some((f) => f.name !== "classifySession");
+        if (hasClassify && !hasPropose) {
+          // Find the classification value to make the confirmation specific.
+          const cls = functionCalls.find((f) => f.name === "classifySession");
+          const value = cls?.args?.classification;
+          if (value === "training") {
+            reply = "Got it — marked as training. The chart and your training totals will reflect that.";
+          } else if (value === "activity") {
+            reply = "Got it — marked as activity. It won't count toward your training totals.";
+          } else {
+            reply = "Got it — classification updated.";
+          }
+        } else if (hasPropose && !hasClassify) {
+          reply = "I'd like to propose a plan change — see the card below.";
+        } else {
+          // Mixed: at least one classify AND at least one propose. Rare.
+          reply = "Got it — and I'd like to propose a plan change too. See the card below.";
+        }
       }
     } catch (parseErr) {
       console.error("coachChatTurn response-parse error:", parseErr);
