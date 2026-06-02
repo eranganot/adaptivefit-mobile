@@ -496,6 +496,9 @@ export async function coachChatTurn(
   let workoutContext = "";
   let goalContext = "";
   let stateContext = "";
+  // Hoisted out of the context-building try block so the Gemini-call block
+  // below can pass it to the summarizer.
+  let pendingAmbiguousLines: string[] = [];
   try {
     await db.insert(coachChatMessages).values({ userId, workoutLogId: dbWorkoutLogId, role: "user", content: message });
 
@@ -607,7 +610,6 @@ export async function coachChatTurn(
     //
     // This drops prompt token count significantly (a user with 40 sessions,
     // 35 already labelled, was sending 35 redundant lines per turn).
-    let pendingAmbiguousLines: string[] = [];
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
       const externalRowsRaw = await db
