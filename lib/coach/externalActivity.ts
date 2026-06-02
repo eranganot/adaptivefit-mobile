@@ -123,6 +123,70 @@ export function summarizeExternalActivity(
   };
 }
 
+/**
+ * Collapse overlapping/duplicate HC sessions before they reach the chat coach.
+ *
+ * Real-world data quality issue: Samsung Health auto-splits a single walk when
+ * the user pauses (e.g., at a traffic light) ≥ 30s, producing two consecutive
+ * "sessions" for one activity. AND a phone that has both Strava and Samsung
+ * Health installed records the same physical workout twice — once per app.
+ * The chat coach used to see both and ask the user dumb questions ("are these
+ * the same thing?"); dedupe upstream so the coach never sees the duplicates.
+ *
+ * Strategy:
+ *   1. Sort sessions by start time.
+ *   2. For each session, check if it overlaps any session already kept,
+ *      with a small tolerance (90 seconds) on each end to absorb the
+ *      Samsung pause-split case.
+ *   3. If it overlaps an already-kept session, keep whichever is LONGER
+ *      (more complete coverage of the actual activity). Drop the shorter.
+ *   4. If no overlap, add to kept.
+ *
+ * Note: this does NOT merge sessions (e.g., sum distances). It picks one
+ * winner per cluster. Merging would risk inventing data — better to trust
+ * the longest single recording.
+ */
+const DEDUPE_TOLERANCE_MS = 90 * 1000;
+
+export function dedupeOverlappingSessions<T extends SessionInput>(sessions: T[]): T[] {
+  if (sessions.length <= 1) return [...sessions];
+
+  // Resolve to Date once per session to avoid re-parsing in the inner loop.
+  type WithTimes = T & { _start: Date; _end: Date };
+  const sorted: WithTimes[] = sessions
+    .map((s) => {
+      const start = s.startTime instanceof Date ? s.startTime : new Date(s.startTime);
+      const end = s.endTime instanceof Date ? s.endTime : new Date(s.endTime);
+      return { ...s, _start: start, _end: end } as WithTimes;
+    })
+    .filter((s) => !Number.isNaN(s._start.getTime()) && !Number.isNaN(s._end.getTime()) && s._end > s._start)
+    .sort((a, b) => a._start.getTime() - b._start.getTime());
+
+  const kept: WithTimes[] = [];
+  for (const candidate of sorted) {
+    const overlapIdx = kept.findIndex(
+      (k) =>
+        candidate._start.getTime() <= k._end.getTime() + DEDUPE_TOLERANCE_MS &&
+        candidate._end.getTime() >= k._start.getTime() - DEDUPE_TOLERANCE_MS,
+    );
+    if (overlapIdx === -1) {
+      kept.push(candidate);
+      continue;
+    }
+    const incumbent = kept[overlapIdx];
+    const incumbentDur = incumbent._end.getTime() - incumbent._start.getTime();
+    const candidateDur = candidate._end.getTime() - candidate._start.getTime();
+    if (candidateDur > incumbentDur) {
+      // Longer recording replaces the shorter one.
+      kept[overlapIdx] = candidate;
+    }
+    // else: drop the candidate, keep the existing longer one.
+  }
+
+  // Strip the temporary _start/_end fields before returning.
+  return kept.map(({ _start: _s, _end: _e, ...rest }) => rest as unknown as T);
+}
+
 /** Pretty source-app names for the prompt. Falls back to the package name as-is. */
 const SOURCE_APP_LABELS: Record<string, string> = {
   "com.strava": "Strava",

@@ -148,7 +148,11 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
       const result = await coachChatTurn(text, workoutLogId);
       let replyText: string;
       if ("error" in result) {
-        // Per-code user-facing copy. Underlying error is logged server-side.
+        // Per-code user-facing copy. For "gemini" errors the server now
+        // sends a specific message via describeGeminiError() — surface it
+        // directly so the user knows whether to wait, retry, start a fresh
+        // thread, etc. Falls back to a generic message only when the server
+        // didn't supply one.
         switch (result.code) {
           case "auth":
             replyText = "Sign in again to chat with your coach.";
@@ -157,7 +161,9 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
             replyText = "This thread reached its 10-turn limit. Start a fresh thread by ending this workout.";
             break;
           case "gemini":
-            replyText = "Coach service is temporarily unavailable. Try again in a minute.";
+            replyText = result.error?.trim()
+              ? result.error
+              : "Coach service is temporarily unavailable. Try again in a minute.";
             break;
           case "db":
             replyText = "Couldn't save your message. Try again.";

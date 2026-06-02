@@ -19,7 +19,11 @@ import {
   summarizeExternalActivity,
   formatExternalActivityForPrompt,
   formatRecentSessionsForPrompt,
+  dedupeOverlappingSessions,
+  classifySessionSmart,
 } from "@/lib/coach/externalActivity";
+import { withGeminiRetry, describeGeminiError } from "@/lib/gemini/retry";
+import { summarizeCoachContext } from "@/lib/gemini/summarizeContext";
 import { COACH_CHAT_TOOLS, functionNameToActionType } from "@/lib/coach/chatTools";
 import { eq, desc, and, inArray, sql, gte } from "drizzle-orm";
 import type { GoalCategory } from "@/lib/coach";
@@ -588,20 +592,25 @@ export async function coachChatTurn(
 
     // External sessions context — workouts/walks/rides from Strava / Samsung
     // Health / Google Fit / etc. that landed in HC but weren't logged in
-    // AdaptiveFit. Pulled from fit_sessions (populated by syncHealthConnectData
-    // on every HC sync). Without this, the chat coach would tell the athlete
-    // "you haven't trained recently" when in reality they ran 5k on Strava
-    // yesterday. 30-day window matches the standard sync horizon.
+    // AdaptiveFit.
     //
-    // We surface BOTH a high-level summary AND the most recent 3 individual
-    // sessions in detail, plus a heuristic classification per session
-    // ("training" vs "activity"). The HARD RULE that previously labelled
-    // every external session as "completed training" was wrong — a 1km
-    // morning walk is activity, not training. The new guidance lets
-    // Gemini reason about each session on its own merits.
+    // Pipeline:
+    //   1. Pull all fit_sessions in 30d window.
+    //   2. Dedupe overlapping sessions (Samsung Health splits a single walk
+    //      when the user pauses ≥30s; Strava + Samsung Health both recording
+    //      the same workout). Keep the longest in each cluster.
+    //   3. Aggregate summary line covers ALL sessions (so the coach knows
+    //      external training is happening).
+    //   4. Per-session detail block only includes UNCLASSIFIED sessions —
+    //      the chat coach asks the user to label these. Already-classified
+    //      sessions don't need to clutter the prompt every turn.
+    //
+    // This drops prompt token count significantly (a user with 40 sessions,
+    // 35 already labelled, was sending 35 redundant lines per turn).
+    let pendingAmbiguousLines: string[] = [];
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
-      const externalRows = await db
+      const externalRowsRaw = await db
         .select({
           id: fitSessions.id,
           startTime: fitSessions.startTime,
@@ -614,38 +623,51 @@ export async function coachChatTurn(
         .where(
           and(eq(fitSessions.userId, userId), gte(fitSessions.endTime, thirtyDaysAgo)),
         );
+
+      // Step 2 — dedupe.
+      const externalRows = dedupeOverlappingSessions(externalRowsRaw);
+
+      // Step 3 — aggregate summary (all sessions).
       const externalSummary = summarizeExternalActivity(
         externalRows,
         thirtyDaysAgo,
         new Date(),
       );
       const externalLine = formatExternalActivityForPrompt(externalSummary);
+
+      // Step 4 — per-session lines ONLY for unclassified ambiguous sessions.
+      // Already-classified rows don't need to recur in the prompt.
+      const unclassifiedAmbiguous = externalRows.filter((r) => {
+        if (r.userClassification !== null) return false;
+        const durationSec = Math.max(
+          0,
+          Math.round((r.endTime.getTime() - r.startTime.getTime()) / 1000),
+        );
+        const cls = classifySessionSmart({
+          durationSec,
+          distanceM: r.distanceM,
+          sourceApp: r.sourceApp,
+        });
+        return cls.bucket === "ambiguous";
+      });
+      pendingAmbiguousLines = formatRecentSessionsForPrompt(
+        unclassifiedAmbiguous,
+        new Date(),
+        3, // cap at 3 — the chat coach asks about one at a time anyway
+      );
+
       if (externalLine) {
-        const recentLines = formatRecentSessionsForPrompt(externalRows, new Date(), 3);
-        stateContext += `\n## External sessions seen (from connected apps)\n- ${externalLine}\n`;
-        if (recentLines.length > 0) {
-          stateContext += `\n### Most recent external sessions\n`;
-          for (const line of recentLines) {
+        stateContext += `\n## External sessions (last 30d)\n- ${externalLine}\n`;
+        if (pendingAmbiguousLines.length > 0) {
+          stateContext += `\n### Ambiguous sessions awaiting classification\n`;
+          for (const line of pendingAmbiguousLines) {
             stateContext += `- ${line}\n`;
           }
+          stateContext +=
+            `\nWhen the athlete has any unaddressed AMBIGUOUS session above, ask about the most recent one at the start of your reply. On the athlete's answer, call classifySession({sessionId, classification}) — immediate, no card. Use the [id=<uuid>] verbatim; do not invent IDs.\n`;
         }
-        stateContext +=
-          `\n### How to talk about external sessions\n` +
-          `Each session above carries a label inferred from duration, distance, pace, and source app:\n` +
-          `  • **labelled training** — the athlete already confirmed this was a workout. Count it.\n` +
-          `  • **labelled activity** — the athlete already confirmed this was NOT a workout. Do not call it training.\n` +
-          `  • **likely training** — auto-classified (running pace / long distance / long duration / intentional Strava recording). Treat as a real session.\n` +
-          `  • **likely activity** — auto-classified (short, slow, or no-distance non-Strava session). Treat as casual, not training.\n` +
-          `  • **AMBIGUOUS — please clarify** — the auto classifier wasn't confident. ASK the athlete whether it was training or activity, and persist their answer with the classifySession tool (see Plan-change tools below). Carry the id from "[id=<uuid>]" verbatim — do NOT invent it.\n` +
-          `\n` +
-          `### Rules for using this data:\n` +
-          `- Do not tell ${athleteName} "you haven't trained" when training-labelled sessions exist in the list above.\n` +
-          `- Do not call activity-labelled or "likely activity" sessions "training" or "a session" — call them "a walk" or "some activity" if you mention them at all.\n` +
-          `- When at least one AMBIGUOUS session exists AND ${athleteName} hasn't already addressed it in this thread, proactively ask about the most recent one at the start of your reply. Example: "Before I answer — I saw a 4.2km / 48min session from Samsung Health yesterday afternoon. Was that training or a casual walk?" Then on their reply, call classifySession({sessionId, classification}) — applies immediately, no Approve card.\n` +
-          `- If ${athleteName} disagrees with an automatic label (e.g., "that walk WAS my recovery"), accept it and call classifySession to flip the label.\n`;
       }
     } catch (err) {
-      // Non-fatal — coach chat still works with workout_logs alone.
       console.warn("[coachChatTurn] external activity summary failed:", err);
     }
 
@@ -712,108 +734,186 @@ export async function coachChatTurn(
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
   }
 
-  // 4. Gemini call — chat session, English-only, 4096 token budget.
+  // 4. Gemini call — chat session.
   //
-  // Model choice: gemini-2.5-flash. We tried gemini-2.5-pro but the
-  // @google/generative-ai SDK (0.21) doesn't handle Pro's thinking-token
-  // accounting properly — Pro consumes the maxOutputTokens budget on internal
-  // reasoning that doesn't appear in response.text(), producing empty replies.
-  // Flash works cleanly with the existing SDK and at 4096 tokens with the
-  // strong system prompt below it produces solid coaching prose.
+  // Model: gemini-2.5-pro (was Flash). Pro reasons better across the
+  // multi-turn coach use case but is slower per token AND its "thinking"
+  // tokens count against maxOutputTokens. We bump the output budget to
+  // 16k to give thinking + actual response both room. The earlier Flash
+  // setup with 4k worked only because Flash doesn't do thinking-tokens.
+  //
+  // Pipeline this turn:
+  //   (a) Summarizer pre-step (Gemini Flash) → ~10-bullet compressed
+  //       context. Replaces the verbose workout/state/external blocks.
+  //   (b) Main Pro call with retry-with-backoff for transient errors.
+  //
+  // The trade is +200ms latency from the summarizer for -25k tokens off
+  // the main prompt. Net: faster end-to-end on Pro, cheaper per turn, and
+  // sharper responses (less noise for the model to sift).
   let reply: string;
   const functionCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
-  const modelName = MODELS.FAST; // gemini-2.5-flash
+  const modelName = MODELS.DEEP; // gemini-2.5-pro
+  let errorReason: ReturnType<typeof describeGeminiError> | null = null;
   try {
-    // athleteName is hoisted to the top of coachChatTurn so the
-    // stateContext-building block above can also reference it.
+    // ── (a) Context summarizer pre-step ───────────────────────────
+    // Pull what the summarizer needs from the data we already loaded
+    // earlier in this function. Non-fatal — falls back to a compact
+    // deterministic summary on its own.
+    let contextSummary = "";
+    try {
+      // Hydrate recent logs with sentiment for the summarizer.
+      const recentForSummary = [];
+      {
+        const recentRaw = await db
+          .select()
+          .from(workoutLogs)
+          .where(eq(workoutLogs.userId, userId))
+          .orderBy(desc(workoutLogs.performedAt))
+          .limit(10);
+        if (recentRaw.length > 0) {
+          const sentiments = await db
+            .select()
+            .from(feedbackSentiment)
+            .where(inArray(feedbackSentiment.workoutLogId, recentRaw.map((l) => l.id)));
+          const sentMap = new Map(sentiments.map((s) => [s.workoutLogId, s]));
+          for (const l of recentRaw) {
+            recentForSummary.push({ ...l, sentiment: sentMap.get(l.id) ?? null });
+          }
+        }
+      }
+
+      const stateRow = await db.query.userLevelState.findFirst({
+        where: eq(userLevelState.userId, userId),
+      });
+      const activeGoal = await db.query.goals.findFirst({
+        where: and(eq(goals.userId, userId), eq(goals.status, "active")),
+        orderBy: (g, { desc: d }) => [d(g.createdAt)],
+      });
+
+      // Reuse the dedupe + ambiguous-only set we already computed for
+      // the prompt context above (via `pendingAmbiguousLines`).
+      const summary = await summarizeCoachContext({
+        athleteName,
+        recentLogs: recentForSummary,
+        state: stateRow
+          ? {
+              currentLevel: stateRow.currentLevel,
+              freezeActive: stateRow.freezeActive,
+              freezeReason: stateRow.freezeReason,
+              manualOverride: stateRow.manualOverride,
+            }
+          : null,
+        goal: activeGoal
+          ? {
+              category: activeGoal.category,
+              type: activeGoal.type,
+              targetValue: activeGoal.targetValue,
+              targetUnit: activeGoal.targetUnit,
+              targetDate: activeGoal.targetDate,
+              note: activeGoal.note,
+            }
+          : null,
+        externalActivity: null, // already aggregated in stateContext above
+        pendingAmbiguousSessions: pendingAmbiguousLines,
+      });
+      contextSummary = summary.bullets;
+      console.info("[coachChatTurn] context summarizer:", JSON.stringify({
+        source: summary.source,
+        approxTokens: summary.approxTokens,
+      }));
+    } catch (sumErr) {
+      console.warn("[coachChatTurn] summarizer pre-step failed:", sumErr);
+    }
+
+    // ── Trimmed system prompt ──────────────────────────────────────
+    // Condensed from the v1 multi-discipline prompt (~3k tokens) to
+    // ~1.2k tokens. Same coaching philosophy, dropped redundant
+    // examples and the verbose multi-discipline frame in favour of
+    // a tight rule list.
     const systemInstruction =
-      `You are an experienced personal sports coach for ${athleteName} — qualified across running, strength, and mobility/recovery. ` +
-      `${athleteName} is rehabbing plantar fasciitis (foot pain), which underlies all running decisions but doesn't define every conversation. Your job is to give specific, evidence-based coaching grounded in the athlete's actual data, prioritizing injury prevention and sustainable progression over chasing volume or speed.\n\n` +
+      `You are ${athleteName}'s personal sports coach — qualified across running, strength, and mobility. ${athleteName} is rehabbing plantar fasciitis (foot pain). Give specific, evidence-based replies grounded in the athlete's data.\n` +
+      `\n` +
       `## Hard rules\n` +
-      `- ALWAYS reply in English, even if the athlete writes in Hebrew or another language. The athlete is bilingual; English is more token-efficient.\n` +
-      `- Finish every sentence cleanly. Never end mid-word or mid-clause.\n` +
-      `- Never recommend pushing through sharp foot pain — regardless of workout type.\n` +
-      `- Refer to the athlete by name (${athleteName}). Don't transliterate or shorten the name.\n` +
-      `- Match your vocabulary to the modality being discussed (see Multi-discipline frame below). A strength question gets strength language; a mobility question gets mobility language; don't force "easy 5k at 7:15/km" framing onto every reply.\n\n` +
-      `## Length — match the question, don't pad\n` +
-      `- A simple yes/no question gets a one-line answer. A short check-in gets one or two sentences.\n` +
-      `- Only go longer when reasoning is genuinely needed (e.g. trade-offs, training plan changes, injury concerns).\n` +
-      `- Never repeat yourself. Never restate the question. Never add filler like "great question" or "absolutely!".\n` +
-      `- If you don't have anything substantive to add, say less. A blunt three-word reply is better than 50 words of padding.\n\n` +
-      `## Coaching style\n` +
-      `- Be specific and actionable. Reference the athlete's actual workout data (distance, RPE, pain, symptoms, notes, lifts) when it's relevant.\n` +
-      `- Ask a follow-up question only when you genuinely need more context to give good advice.\n` +
-      `- Use concrete training language. For running: pace ranges, RPE targets, time-on-feet, recovery cues. For strength: sets × reps × load, RPE/RIR, exercise selection, ROM, tempo. For mobility: target regions, restriction patterns, fascial work, breathing. Avoid generic phrases like "a well-structured workout."\n` +
-      `- Push back gently when the athlete proposes something risky for the rehab — irrespective of modality (heavy back-squats with high foot pain are as off-limits as running through pain). Explain WHY based on the data.\n\n` +
-      `## Multi-discipline frame — adapt to the modality at hand\n` +
+      `- Reply in English (the athlete is bilingual EN/HE; English is token-efficient).\n` +
+      `- Refer to the athlete by name (${athleteName}). Don't shorten or transliterate.\n` +
+      `- Never recommend pushing through sharp foot pain.\n` +
+      `- Match vocabulary to the modality: running = pace/RPE/foot-pain; strength = sets×reps×load/RPE/RIR; mobility = ROM/restriction; other = ask first.\n` +
+      `- Finish every sentence cleanly. No filler ("great question", "absolutely").\n` +
       `\n` +
-      `**Running (the athlete's primary modality):** plantar-fascia rehab is the foundational concern. RPE ≥ 9 or foot pain ≥ 7 = freeze trigger, not a suggestion. Foot pain 4–6 = soft freeze framing (hold volume, surface the pain trend). Pain ≤ 3 and RPE ≤ 7 = the "green band" where progression is available. Always-relevant cues: calf raises, single-leg stability, soleus loading, gradual surface progression.\n` +
+      `## Length policy\n` +
+      `Match the question. Yes/no → one line. Short check-in → 1-2 sentences. Only go long when explaining a trade-off, plan change, or injury concern. Never repeat. Three-word blunt reply beats 50 words of padding.\n` +
       `\n` +
-      `**Strength:** progressive overload, RPE/RIR, technique. RPE ≥ 9 → overload risk, back off load 10–15% or drop a set next session. RPE 7–8 → productive range. RPE ≤ 6 → headroom to progress (+2.5–5 kg on compounds, or add a set, or progress accessory work). Respect the weakest lift, not the strongest. Plantar-fascia interaction: loaded squats and deadlifts increase stance demand — if foot pain ≥ 3 on a strength day, suggest swapping for safety-bar / leg press / hack squat next time.\n` +
+      `## Triggers\n` +
+      `- Foot pain ≥ 7 OR running RPE ≥ 9 → freeze trigger (not a suggestion).\n` +
+      `- Foot pain 4-6 → soft freeze framing (hold volume, surface the pain trend).\n` +
+      `- Pain ≤ 3 AND RPE ≤ 7 → "green band" — name the progression opportunity.\n` +
+      `- Strength RPE ≥ 9 → overload risk. RPE 7-8 → productive. RPE ≤ 6 → headroom.\n` +
+      `- Foot pain ≥ 3 on a strength day → suggest swapping squat/deadlift for safety-bar / leg press next time.\n` +
+      `- Mobility: RPE = effort of the work, not training stress. Don't trigger freeze on it.\n` +
       `\n` +
-      `**Mobility / recovery:** mobility doesn't get "harder" by adding load — it gets more useful by being targeted. Reference the athlete's mentioned restriction regions. Tie mobility into the broader training week (what does this session unlock for the next run or lift?). Don't trigger freeze logic on high RPE for mobility (RPE here is effort of the work itself, not training stress).\n` +
-      `\n` +
-      `**Other / unspecified:** don't over-coach. Acknowledge, ask what modality it was, offer to plan around it next time.\n\n` +
-      `## Length examples\n` +
-      `Q: "Should I run today?"\n` +
-      `A: "Yes — easy 5k at 7:15/km. Foot pain was 2 yesterday, you're cleared."\n` +
-      `\n` +
-      `Q: "How long should I warm up?"\n` +
-      `A: "Five to seven minutes — easy walk into a slow jog, plus calf raises."\n` +
-      `\n` +
-      `Q: "Should I push harder on Friday's run, given how good last Tuesday felt?"\n` +
-      `A: "Hold the line. Your foot pain trended 2→4→5 over the last three runs — that's edging toward our freeze threshold. Stick with the planned 5×600m at current effort, and if pain stays under 3 this week, we add a rep next Tuesday."\n` +
-      `\n` +
-      `Q: "Bench felt easy at 80kg × 5 × 3 today, RPE 6. Should I add weight?"\n` +
-      `A: "Yes — RPE 6 with three clean sets is headroom. Next session try 82.5 × 5 × 3 and aim for RPE 7. If form holds, we keep climbing 2.5 kg per session until you're around RPE 8."\n` +
-      `\n` +
-      `Q: "My calves were really tight on yesterday's mobility session. Worth doing again before tomorrow's run?"\n` +
-      `A: "Yes — soleus and gastroc work back-to-back tonight. Pair calf raises (3 × 12 single-leg) with 2 minutes of fascial release per calf. That'll unlock the run."\n\n` +
       `## Plan-change tools — HARD RULE\n` +
-      `You have 5 tools for proposing plan changes:\n` +
-      `  • proposeSoftenSession — ease an existing future session (reduce volume/intensity).\n` +
-      `  • proposeSwapToRest — replace an existing session with rest/mobility.\n` +
-      `  • proposeAddSession — add a NEW session on a future date (use this when the athlete asks to schedule something extra or move a workout to another day — propose ADD on the new date and proposeSwapToRest on the old).\n` +
-      `  • proposeFreezeWeek — halt progression for N days due to a flare-up.\n` +
-      `  • proposeRecordSymptom — log a symptom that wasn't captured at workout time.\n` +
+      `Tools: proposeSoftenSession, proposeSwapToRest, proposeAddSession, proposeFreezeWeek, proposeRecordSymptom, classifySession.\n` +
       `\n` +
-      `CRITICAL RULES — read carefully:\n` +
-      `1. If your text reply describes a change to the plan (any phrasing like "I propose to...", "let's swap...", "I'd ease...", "add a session..."), you MUST also CALL the corresponding tool. The user only sees an Approve/Decline card if you ACTUALLY CALL the tool. Saying "I propose..." in text alone is invisible to them — they see no card and your suggestion goes nowhere.\n` +
-      `2. ALWAYS pair text + tool call. The text explains WHY in plain language; the tool call makes it actionable.\n` +
-      `3. Use the EXACT sessionId UUIDs from the "Upcoming planned sessions" context when soften/swap/etc. If no upcoming session matches the athlete's request, propose a NEW one via proposeAddSession instead of guessing an id.\n` +
-      `4. For "move today to tomorrow" or similar reschedules: emit TWO tool calls — proposeSwapToRest for today's session AND proposeAddSession for the new date.\n` +
-      `5. If the athlete's message is genuinely a non-action question (e.g., "how long should I warm up?"), reply text-only with no tool call. The default is text-only; tools are only when a real plan change is being proposed.\n` +
+      `If your text describes a plan change ("I propose…", "let's swap…", "add a session…"), you MUST also CALL the matching propose* tool. Text alone is invisible — the athlete only sees an Approve/Decline card when the tool fires. Pair text + tool call every time.\n` +
       `\n` +
-      `Examples:\n` +
-      `❌ WRONG: text "I propose to swap today's Easy Run to a rest day." (no tool call) → user sees no card.\n` +
-      `✅ RIGHT: text "Eran, since today's session didn't happen, I'll propose swapping it to rest and adding a 5km easy run on Monday." + proposeSwapToRest({sessionId: "<today's id>", reason: "missed today"}) + proposeAddSession({targetDate: "2026-05-11", title: "Easy run — 5 km @ 7:15/km", distanceKm: 5, paceSecPerKm: 435, reason: "make up for missed Sunday"}).\n`;
+      `Use the EXACT sessionId UUID from the "Upcoming planned sessions" context. If no match, use proposeAddSession instead of guessing. For "move today to tomorrow": emit TWO calls (proposeSwapToRest for today + proposeAddSession for tomorrow).\n` +
+      `\n` +
+      `classifySession is different — it applies IMMEDIATELY (no card). Use it when the athlete clearly answers "yes/training" or "no/activity" to an AMBIGUOUS session prompt. Pass the [id=<uuid>] verbatim — don't invent.\n` +
+      `\n` +
+      `Non-action questions ("how long should I warm up?") → text-only, no tool. Tools fire only when a real plan change is being made.`;
 
     const model = gemini().getGenerativeModel({
       model: modelName,
       systemInstruction,
-      generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
+      // 16k output budget — Pro spends some tokens on internal "thinking"
+      // that don't appear in response.text(); 4k (the old Flash budget)
+      // would starve the actual response. 16k still leaves plenty of
+      // headroom for chain-of-thought.
+      generationConfig: { temperature: 0.4, maxOutputTokens: 16384 },
       tools: COACH_CHAT_TOOLS,
     });
 
-    // Build the contextual preamble — sent as the first user turn alongside
-    // the actual question, so the model has full grounding for this reply.
-    const contextPreamble = [workoutContext, goalContext, stateContext]
-      .filter((s) => s.length > 0)
-      .join("\n");
-
-    // Use the chat-session API with proper turn structure.
-    const chat = model.startChat({
-      history: history.map((h) => ({
-        role: h.role,
-        parts: [{ text: h.text }],
-      })),
-    });
+    // Build the contextual preamble. The summarized context (if available)
+    // REPLACES the verbose workoutContext + stateContext blocks. goalContext
+    // is small enough to keep alongside.
+    const contextPreamble = contextSummary
+      ? [`## Recent training (bullets)\n${contextSummary}`, stateContext]
+          .filter((s) => s.length > 0)
+          .join("\n")
+      : [workoutContext, goalContext, stateContext]
+          .filter((s) => s.length > 0)
+          .join("\n");
 
     const fullPrompt = contextPreamble
       ? `${contextPreamble}\n\n---\n\n${message}`
       : message;
 
-    const res = await chat.sendMessage(fullPrompt);
+    // Retry-with-backoff wrapper around the actual Gemini call. Retries on
+    // transient categories (429, 503, network), throws immediately on
+    // terminal categories (bad auth, schema rejection). Each retry
+    // re-creates the chat session so a partially-consumed sendMessage
+    // state can't poison the next attempt.
+    const res = await withGeminiRetry(
+      async () => {
+        const chat = model.startChat({
+          history: history.map((h) => ({
+            role: h.role,
+            parts: [{ text: h.text }],
+          })),
+        });
+        return chat.sendMessage(fullPrompt);
+      },
+      {
+        maxAttempts: 3,
+        baseDelayMs: 1000,
+        onRetry: (attempt, lastError) => {
+          console.warn(
+            `[coachChatTurn] Gemini retry ${attempt}/3 after error:`,
+            lastError instanceof Error ? lastError.message : String(lastError),
+          );
+        },
+      },
+    );
 
     // Parse the response in its own try/catch so a parsing exception doesn't
     // masquerade as a Gemini API failure. Structured logging gives us a real
@@ -888,11 +988,18 @@ export async function coachChatTurn(
       }
     } catch (parseErr) {
       console.error("coachChatTurn response-parse error:", parseErr);
-      return { error: "Could not parse coach reply", code: "gemini" };
+      errorReason = describeGeminiError(parseErr);
+      return { error: errorReason.userMessage, code: "gemini" };
     }
   } catch (err) {
     console.error("coachChatTurn gemini error:", err);
-    return { error: err instanceof Error ? err.message : "Gemini error", code: "gemini" };
+    errorReason = describeGeminiError(err);
+    // Log category so we can see in Railway logs what kind of error
+    // bubbled up — rate_limit, context_too_large, network, etc.
+    console.error(
+      `[coachChatTurn] gemini error category=${errorReason.category}`,
+    );
+    return { error: errorReason.userMessage, code: "gemini" };
   }
 
   // 5. Persist assistant reply (model stamp) + any proposed actions linked to it.
