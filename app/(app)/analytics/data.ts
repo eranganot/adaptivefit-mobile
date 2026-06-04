@@ -11,7 +11,7 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workoutLogs, userLevelState, users, fitDailyMetrics, fitSessions, goals, bodyMetrics, strengthLogs } from "@/lib/db/schema";
-import { eq, sql, and, gte, asc } from "drizzle-orm";
+import { eq, sql, and, gte, asc, desc } from "drizzle-orm";
 import { sundayOfWeekIL, sundayNWeeksAgo, toILDateString, weekLabel } from "@/lib/analytics/week";
 import { classifySessionSmart } from "@/lib/coach/externalActivity";
 
@@ -120,7 +120,13 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       .groupBy(sundayExpr)
       .orderBy(asc(sundayExpr)),
 
-    // ── Last 20 sessions for trend chart ──────────────────────────────────
+    // ── Most recent 20 sessions for trend chart ──────────────────────────
+    // Was: orderBy(asc(performedAt)).limit(20) — that returned the OLDEST
+    // 20 sessions ever logged. Once the user had more than 20 workouts on
+    // record, recent sessions (with their distance + pace) never made it
+    // into the chart and the trend showed only stale history. Fix: pull
+    // the newest 20 via DESC, then reverse client-side for the chart's
+    // left-to-right (oldest → newest) rendering convention.
     db
       .select({
         performedAt: workoutLogs.performedAt,
@@ -133,7 +139,7 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       })
       .from(workoutLogs)
       .where(eq(workoutLogs.userId, user.id))
-      .orderBy(asc(workoutLogs.performedAt))
+      .orderBy(desc(workoutLogs.performedAt))
       .limit(20),
 
     // ── Coach state ───────────────────────────────────────────────────────
@@ -288,7 +294,10 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
   }
 
   // Shape session points
-  const sessions: SessionPoint[] = sessionsRaw.map((r) => ({
+  // SQL returned newest-first (so the LIMIT 20 keeps recent sessions).
+  // Reverse to oldest-first for the chart's left-to-right rendering.
+  const sessionsChronological = [...sessionsRaw].reverse();
+  const sessions: SessionPoint[] = sessionsChronological.map((r) => ({
     label: new Date(r.performedAt).toLocaleDateString("en-GB", {
       day: "numeric",
       month: "short",
