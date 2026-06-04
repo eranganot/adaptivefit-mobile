@@ -754,7 +754,9 @@ export async function coachChatTurn(
   // sharper responses (less noise for the model to sift).
   let reply: string;
   const functionCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
-  const modelName = MODELS.DEEP; // gemini-2.5-pro
+  // MODELS.CHAT defaults to Flash for reliability. Flip to Pro by setting
+  // GEMINI_MODEL_CHAT=gemini-2.5-pro in Railway Variables. No code change.
+  const modelName = MODELS.CHAT;
   let errorReason: ReturnType<typeof describeGeminiError> | null = null;
   try {
     // ── (a) Context summarizer pre-step ───────────────────────────

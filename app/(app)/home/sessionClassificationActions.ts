@@ -13,10 +13,13 @@
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, fitSessions } from "@/lib/db/schema";
-import { eq, and, isNull, desc, gte } from "drizzle-orm";
+import { users, fitSessions, workoutLogs } from "@/lib/db/schema";
+import { eq, and, isNull, desc, gte, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { classifySessionSmart } from "@/lib/coach/externalActivity";
+import {
+  classifySessionSmart,
+  dedupeOverlappingSessions,
+} from "@/lib/coach/externalActivity";
 
 export type PendingClassification = {
   id: string;
@@ -49,35 +52,93 @@ export async function getPendingClassifications(): Promise<PendingClassification
 
     const fourteenDaysAgo = new Date(Date.now() - 14 * 86_400_000);
 
-    const rows = await db
-      .select({
-        id: fitSessions.id,
-        startTime: fitSessions.startTime,
-        endTime: fitSessions.endTime,
-        distanceM: fitSessions.distanceM,
-        sourceApp: fitSessions.sourceApp,
-      })
-      .from(fitSessions)
-      .where(
-        and(
-          eq(fitSessions.userId, user.id),
-          isNull(fitSessions.userClassification),
-          gte(fitSessions.endTime, fourteenDaysAgo),
+    // Pull all unclassified sessions in the window + all AF workout logs
+    // in the same window. The workout_logs are used to filter out sessions
+    // that overlap an in-app log — those represent the SAME physical
+    // activity (the user tracked it via AdaptiveFit AND it landed in HC
+    // via Strava/Samsung/etc.) and don't need the user to classify them.
+    const [rowsRaw, recentAfLogs] = await Promise.all([
+      db
+        .select({
+          id: fitSessions.id,
+          startTime: fitSessions.startTime,
+          endTime: fitSessions.endTime,
+          distanceM: fitSessions.distanceM,
+          sourceApp: fitSessions.sourceApp,
+        })
+        .from(fitSessions)
+        .where(
+          and(
+            eq(fitSessions.userId, user.id),
+            isNull(fitSessions.userClassification),
+            gte(fitSessions.endTime, fourteenDaysAgo),
+          ),
+        )
+        .orderBy(desc(fitSessions.startTime))
+        .limit(50),
+      db
+        .select({
+          performedAt: workoutLogs.performedAt,
+          durationSec: workoutLogs.durationSec,
+        })
+        .from(workoutLogs)
+        .where(
+          and(
+            eq(workoutLogs.userId, user.id),
+            gte(workoutLogs.performedAt, fourteenDaysAgo),
+          ),
         ),
-      )
-      .orderBy(desc(fitSessions.startTime))
-      .limit(20);
+    ]);
 
-    // Filter to only "ambiguous" per the auto classifier. clearly_training
-    // and clearly_activity rows are unclassified-but-not-pending —
-    // they don't need user input. Done in JS rather than SQL because the
-    // classifier is multi-rule and shouldn't be duplicated in Postgres.
+    // Dedupe overlapping sessions BEFORE classification — same activity
+    // recorded by multiple HC sources (Strava + Samsung Health + Google Fit)
+    // becomes one row. Otherwise the user sees "two sessions at 11:56,
+    // 2.6km and 1.5km" which is the same workout twice.
+    const rows = dedupeOverlappingSessions(rowsRaw);
+
+    // Filter out sessions that overlap an in-app AF workout. The user
+    // already counted these by logging in AdaptiveFit; asking them to
+    // re-classify the HC copy is noise.
+    const OVERLAP_TOLERANCE_MS = 5 * 60 * 1000; // 5 min on each side
+
+    function overlapsAnyAfLog(session: { startTime: Date; endTime: Date }): boolean {
+      for (const log of recentAfLogs) {
+        const logStart = new Date(log.performedAt);
+        // workout_logs.duration_sec can be null for strength / mobility /
+        // other types. Treat as a 60-min default window so we still catch
+        // overlap on those — false-positive risk is low (the user knows
+        // they logged something around that time).
+        const logDurSec = log.durationSec ?? 60 * 60;
+        const logEnd = new Date(logStart.getTime() + logDurSec * 1000);
+        if (
+          session.startTime.getTime() <= logEnd.getTime() + OVERLAP_TOLERANCE_MS &&
+          session.endTime.getTime() >= logStart.getTime() - OVERLAP_TOLERANCE_MS
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Classify + filter. Only "ambiguous" sessions that DON'T overlap an AF
+    // log surface here. clearly_training and clearly_activity rows
+    // auto-classify and don't need user input. AF-overlapped rows
+    // implicitly are training (the user did log them) — fire the
+    // auto-classify write-back below.
     const pending: PendingClassification[] = [];
+    const sessionsCoveredByAfLog: string[] = [];
+
     for (const r of rows) {
       const durationSec = Math.max(
         0,
         Math.round((r.endTime.getTime() - r.startTime.getTime()) / 1000),
       );
+
+      if (overlapsAnyAfLog({ startTime: r.startTime, endTime: r.endTime })) {
+        sessionsCoveredByAfLog.push(r.id);
+        continue;
+      }
+
       const cls = classifySessionSmart({
         durationSec,
         distanceM: r.distanceM,
@@ -95,6 +156,42 @@ export async function getPendingClassifications(): Promise<PendingClassification
         });
       }
     }
+
+    // Auto-classify the AF-covered sessions as training in the background.
+    // Best-effort — never blocks the response. Once persisted, these
+    // sessions won't surface again on the Home card or in the chat coach
+    // prompt; they count as training in the chart (because the per-day
+    // merge already prefers workout_logs, this is consistent with the
+    // existing "your AF log is the source of truth on that day" rule).
+    //
+    // Ownership-scoped (userId + IN session IDs + still null) so we can't
+    // accidentally classify someone else's sessions or overwrite a manual
+    // choice the user made between query time and update time.
+    if (sessionsCoveredByAfLog.length > 0) {
+      void (async () => {
+        try {
+          await db
+            .update(fitSessions)
+            .set({ userClassification: "training" })
+            .where(
+              and(
+                eq(fitSessions.userId, user.id),
+                isNull(fitSessions.userClassification),
+                inArray(fitSessions.id, sessionsCoveredByAfLog),
+              ),
+            );
+          console.info(
+            `[getPendingClassifications] auto-classified ${sessionsCoveredByAfLog.length} AF-overlapping session(s) as training`,
+          );
+        } catch (autoErr) {
+          console.warn(
+            "[getPendingClassifications] auto-classify AF-covered failed:",
+            autoErr,
+          );
+        }
+      })();
+    }
+
     return pending;
   } catch (e) {
     console.error("[getPendingClassifications] error:", e);
