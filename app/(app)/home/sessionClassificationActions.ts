@@ -80,6 +80,8 @@ export async function getPendingClassifications(): Promise<PendingClassification
         .select({
           performedAt: workoutLogs.performedAt,
           durationSec: workoutLogs.durationSec,
+          distanceKm: workoutLogs.distanceKm,
+          type: workoutLogs.type,
         })
         .from(workoutLogs)
         .where(
@@ -96,23 +98,93 @@ export async function getPendingClassifications(): Promise<PendingClassification
     // 2.6km and 1.5km" which is the same workout twice.
     const rows = dedupeOverlappingSessions(rowsRaw);
 
-    // Filter out sessions that overlap an in-app AF workout. The user
-    // already counted these by logging in AdaptiveFit; asking them to
-    // re-classify the HC copy is noise.
-    const OVERLAP_TOLERANCE_MS = 5 * 60 * 1000; // 5 min on each side
+    // Detect whether a fit_session is "covered" by an in-app AF workout —
+    // i.e., the user already counted this activity by logging it in
+    // AdaptiveFit, so the HC copy is a duplicate the chat coach and Home
+    // card shouldn't ask about.
+    //
+    // Why we don't just use time-window overlap:
+    //   workout_logs.performedAt is when the user LOGGED, not when they
+    //   physically did the workout. If you ran at 08:00 but logged at 09:30,
+    //   a naïve overlap with [performedAt, performedAt + duration] misses
+    //   the 08:00 HC session entirely.
+    //
+    // Coverage signals (any of these → considered covered):
+    //   1. Same calendar day (Asia/Jerusalem) + distances within 25% of
+    //      each other — strong signal that this is the same physical run.
+    //   2. Same calendar day + durations within 25% — works for strength /
+    //      mobility logs where distance is null.
+    //   3. Time-window overlap with 30-min tolerance (legacy path) — catches
+    //      the simple case where performedAt actually was the workout time.
+    function detectAfCoverage(session: {
+      startTime: Date;
+      endTime: Date;
+      distanceM: number | null;
+    }): boolean {
+      const tz = "Asia/Jerusalem";
+      const sessionDay = session.startTime.toLocaleDateString("en-CA", {
+        timeZone: tz,
+      });
+      const sessionDurSec =
+        (session.endTime.getTime() - session.startTime.getTime()) / 1000;
+      const sessionKm =
+        session.distanceM != null && session.distanceM > 0
+          ? session.distanceM / 1000
+          : null;
+      const TOLERANCE_MS = 30 * 60 * 1000; // 30 min for the legacy window check
 
-    function overlapsAnyAfLog(session: { startTime: Date; endTime: Date }): boolean {
       for (const log of recentAfLogs) {
-        const logStart = new Date(log.performedAt);
-        // workout_logs.duration_sec can be null for strength / mobility /
-        // other types. Treat as a 60-min default window so we still catch
-        // overlap on those — false-positive risk is low (the user knows
-        // they logged something around that time).
-        const logDurSec = log.durationSec ?? 60 * 60;
-        const logEnd = new Date(logStart.getTime() + logDurSec * 1000);
+        const logDay = log.performedAt.toLocaleDateString("en-CA", { timeZone: tz });
+        const sameDay = logDay === sessionDay;
+        const logKm = log.distanceKm ? Number(log.distanceKm) : null;
+        const logDurSec = log.durationSec ?? null;
+
+        // Distance is the strongest discriminator. If BOTH have distance,
+        // distance alone decides — don't fall back to duration on a
+        // distance mismatch (a 60-min run and a 60-min walk have similar
+        // duration but very different distance; they're different
+        // activities).
+        if (sessionKm != null && logKm != null && logKm > 0) {
+          if (!sameDay) continue;
+          const ratio = Math.abs(sessionKm - logKm) / Math.max(sessionKm, logKm);
+          if (ratio < 0.25) return true;
+          // Distance mismatch on same day — these are different activities.
+          continue;
+        }
+
+        // No distance on one or both sides — fall back to duration matching
+        // (within 25%) when both have it, then to legacy time-window overlap.
         if (
-          session.startTime.getTime() <= logEnd.getTime() + OVERLAP_TOLERANCE_MS &&
-          session.endTime.getTime() >= logStart.getTime() - OVERLAP_TOLERANCE_MS
+          sameDay &&
+          sessionDurSec > 0 &&
+          logDurSec != null &&
+          logDurSec > 0
+        ) {
+          const ratio =
+            Math.abs(sessionDurSec - logDurSec) / Math.max(sessionDurSec, logDurSec);
+          if (ratio < 0.25) return true;
+        }
+
+        // Strength / mobility / other logs intrinsically lack duration.
+        // A same-day match is the strongest signal we have for those —
+        // the user clearly logged SOMETHING that day and the HC session
+        // is most likely the same activity.
+        if (
+          sameDay &&
+          logDurSec == null &&
+          (log.type === "strength" || log.type === "mobility" || log.type === "other")
+        ) {
+          return true;
+        }
+
+        // Legacy time-window overlap with tolerance — only fires when we
+        // didn't have a distance comparison above.
+        const logStart = new Date(log.performedAt);
+        const logDurAssumed = logDurSec ?? 60 * 60;
+        const logEnd = new Date(logStart.getTime() + logDurAssumed * 1000);
+        if (
+          session.startTime.getTime() <= logEnd.getTime() + TOLERANCE_MS &&
+          session.endTime.getTime() >= logStart.getTime() - TOLERANCE_MS
         ) {
           return true;
         }
@@ -134,7 +206,11 @@ export async function getPendingClassifications(): Promise<PendingClassification
         Math.round((r.endTime.getTime() - r.startTime.getTime()) / 1000),
       );
 
-      if (overlapsAnyAfLog({ startTime: r.startTime, endTime: r.endTime })) {
+      if (detectAfCoverage({
+        startTime: r.startTime,
+        endTime: r.endTime,
+        distanceM: r.distanceM,
+      })) {
         sessionsCoveredByAfLog.push(r.id);
         continue;
       }

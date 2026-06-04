@@ -173,11 +173,24 @@ export async function getRoadmapData(userId: string): Promise<{
     ];
   }
 
-  // Sort chronologically. The SQL ordered by (weekIndex, dayIndex) which is
-  // chronological for the planned-roadmap rows, but past "adjusted" /
-  // "completed" rows survived the filter AND the synthetic today-rest card
-  // was prepended unconditionally — both of which can land out of date
-  // order. A flat sort by date at the end is the simplest correct fix.
+  // Drop sessions before today (Asia/Jerusalem). The Roadmap tab is a
+  // forward-looking view — past "adjusted" and "completed" rows survived
+  // the filter earlier and added clutter ("Missed due to constraints",
+  // "Rescheduled to tomorrow as requested", etc.). The user can audit
+  // past sessions in the Workouts list / Analytics; here they only want
+  // today + future.
+  //
+  // Cutoff is start-of-today in Asia/Jerusalem so a session scheduled for
+  // 06:00 today still shows after lunch — only YESTERDAY and earlier are
+  // dropped.
+  const tz = "Asia/Jerusalem";
+  const todayKeyIL = new Date().toLocaleDateString("en-CA", { timeZone: tz });
+  sessions = sessions.filter((s) => {
+    const sessionKeyIL = s.date.toLocaleDateString("en-CA", { timeZone: tz });
+    return sessionKeyIL >= todayKeyIL;
+  });
+
+  // Sort chronologically (synthetic today card may have landed mid-array).
   sessions.sort((a, b) => a.date.getTime() - b.date.getTime());
 
   return {
