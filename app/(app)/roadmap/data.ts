@@ -112,11 +112,17 @@ export async function getRoadmapData(userId: string): Promise<{
 
     const plan = row.sessionPlan as SessionPlan;
 
-    if (row.status === "modified") {
+    // Precedence: an actual logged workout on that day beats everything.
+    // Previously "modified" (= the coach adjusted the row, e.g. to rest)
+    // was checked first, so when the user trained anyway after a coach-
+    // initiated rest swap, the card kept showing "Adjusted — rest day"
+    // instead of "Completed". The athlete's actual action is the source
+    // of truth.
+    if (logOnDay || row.status === "completed") {
+      status = "completed";
+    } else if (row.status === "modified") {
       status = "adjusted";
       adjustedNote = plan.rationale || "Session was adjusted";
-    } else if (row.status === "completed" || logOnDay) {
-      status = "completed";
     }
 
     // A "past pending" row is one whose calendar date is in the past, was
