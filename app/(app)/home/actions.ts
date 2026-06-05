@@ -877,16 +877,31 @@ export async function coachChatTurn(
       tools: COACH_CHAT_TOOLS,
     });
 
-    // Build the contextual preamble. The summarized context (if available)
-    // REPLACES the verbose workoutContext + stateContext blocks. goalContext
-    // is small enough to keep alongside.
-    const contextPreamble = contextSummary
-      ? [`## Recent training (bullets)\n${contextSummary}`, stateContext]
-          .filter((s) => s.length > 0)
-          .join("\n")
-      : [workoutContext, goalContext, stateContext]
-          .filter((s) => s.length > 0)
-          .join("\n");
+    // Build the contextual preamble.
+    //
+    // KEY RULE: when the thread is anchored on a specific workout
+    // (dbWorkoutLogId is non-null), workoutContext must always be in the
+    // prompt — it contains the RPE, distance, pain, notes, and AI symptom
+    // analysis for the session being debriefed. Stripping it (as the
+    // earlier summarizer-only path did) made the coach reply
+    // "I don't have a record of today's workout" even when the URL
+    // pointed at that exact workout's UUID. Bug fix: combine all blocks
+    // when both are available — the summary gives broad recent-training
+    // context, workoutContext nails the specific thread anchor.
+    const blocks: string[] = [];
+    if (contextSummary) {
+      blocks.push(`## Recent training (bullets)\n${contextSummary}`);
+    }
+    if (workoutContext) {
+      blocks.push(workoutContext);
+    }
+    if (goalContext) {
+      blocks.push(goalContext);
+    }
+    if (stateContext) {
+      blocks.push(stateContext);
+    }
+    const contextPreamble = blocks.join("\n");
 
     const fullPrompt = contextPreamble
       ? `${contextPreamble}\n\n---\n\n${message}`
