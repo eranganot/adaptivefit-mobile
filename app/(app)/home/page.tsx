@@ -8,6 +8,7 @@ import type { GoalCategory, SessionPlan } from "@/lib/coach";
 import HomeClient from "@/components/home/HomeClient";
 import { getPendingColdStart, ensureColdStartExists } from "./coldStartActions";
 import { getPendingClassifications } from "./sessionClassificationActions";
+import { getOrCreateWorkoutThread } from "@/lib/coach/threads";
 
 export default async function HomePage() {
   const session = await auth();
@@ -128,14 +129,31 @@ export default async function HomePage() {
   const todayPlanIsFromRoadmap = todayRoadmapPlan !== null;
   const todayPlanDate: Date = todayRoadmapDate ?? new Date();
 
-  // Last 2 coach messages for chat preview (Bug #4)
-  let lastChatMessages: { role: string; content: string }[] = [];
+  // Resolve today's workout-debrief thread id so the inline DoneState chat
+  // panel can address the right thread immediately (no client round-trip).
+  // Idempotent — returns the existing thread or creates one. Non-fatal: if
+  // creation fails, the chat panel just shows an empty state instead of
+  // breaking the whole page render.
+  let todayThreadId: string | null = null;
   if (todayLog) {
+    try {
+      const t = await getOrCreateWorkoutThread(user.id, todayLog.id);
+      todayThreadId = t.id;
+    } catch (e) {
+      console.error("getOrCreateWorkoutThread (home page) non-fatal:", e);
+    }
+  }
+
+  // Last 2 coach messages for chat preview (Bug #4). Scoped to the workout-
+  // debrief thread so we see the most-recent two messages for THIS workout,
+  // not some legacy NULL-workout-log row.
+  let lastChatMessages: { role: string; content: string }[] = [];
+  if (todayThreadId) {
     try {
       const msgs = await db
         .select({ role: coachChatMessages.role, content: coachChatMessages.content })
         .from(coachChatMessages)
-        .where(eq(coachChatMessages.workoutLogId, todayLog.id))
+        .where(eq(coachChatMessages.threadId, todayThreadId))
         .orderBy(desc(coachChatMessages.createdAt))
         .limit(2);
       lastChatMessages = msgs.reverse();
@@ -188,6 +206,7 @@ export default async function HomePage() {
       todayLogCount={todayLogCount}
       aiSummary={aiSummary}
       workoutLogId={todayLog?.id ?? null}
+      threadId={todayThreadId}
       fitYesterday={fitYesterday}
       nextSession={nextSession}
       lastChatMessages={lastChatMessages}

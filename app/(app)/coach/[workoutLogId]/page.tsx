@@ -1,32 +1,18 @@
-import { getChatHistory } from "@/app/(app)/home/actions";
-import { getActionsForThread } from "@/app/(app)/coach/actions";
-import { ChatThread } from "@/components/coach/ChatThread";
-import { notFound } from "next/navigation";
-
-interface PageProps {
-  params: Promise<{ workoutLogId: string }>;
-}
-
-export default async function CoachThreadPage({ params }: PageProps) {
-  const { workoutLogId } = await params;
-
-  // Accept either a UUID (workout-scoped thread) OR the "general" sentinel
-  // (a no-workout chat thread, persisted with workoutLogId=NULL in the DB).
-  if (!workoutLogId) notFound();
-  if (workoutLogId !== "general" && workoutLogId.length < 10) notFound();
-
-  const [messages, actions] = await Promise.all([
-    getChatHistory(workoutLogId, 40),
-    getActionsForThread(workoutLogId),
-  ]);
-
-  return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 pb-24">
-      <ChatThread
-        workoutLogId={workoutLogId}
-        initialMessages={messages}
-        initialActions={actions}
-      />
-    </div>
-  );
+/**
+ * THIS FILE AND ITS DIRECTORY MUST BE DELETED BEFORE BUILD.
+ *
+ * Replaced by app/(app)/coach/[threadId]/page.tsx (multi-thread refactor 0007).
+ * Two `[param]` directories at the same path level make Next.js error out at
+ * build time, so this directory has to be physically removed.
+ *
+ * The cowork bash sandbox couldn't delete files under OneDrive — Eran needs
+ * to run this once locally before `pnpm typecheck` / `pnpm build`:
+ *
+ *   Remove-Item "app/(app)/coach/[workoutLogId]" -Recurse -Force
+ *
+ * The default export below is a harmless stub kept only so any IDE that
+ * lints the file before cleanup doesn't choke on "no default export".
+ */
+export default function DeprecatedCoachWorkoutLogIdPage() {
+  return null;
 }

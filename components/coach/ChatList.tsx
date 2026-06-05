@@ -1,16 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { MessageSquare, ChevronRight, ArrowRight } from "lucide-react";
+import { MessageSquare, ChevronRight, ArrowRight, Sparkles } from "lucide-react";
 import type { ChatThread } from "@/app/(app)/home/actions";
 
 interface ChatListProps {
   threads: ChatThread[];
 }
 
-function formatDate(d: Date): string {
+function formatDate(d: Date | null | undefined): string | null {
+  if (!d) return null;
   const date = new Date(d);
-  return date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 export function ChatList({ threads }: ChatListProps) {
@@ -24,7 +29,8 @@ export function ChatList({ threads }: ChatListProps) {
           No conversations yet
         </p>
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
-          Log a workout on the Home tab, then tap &ldquo;Continue Chat&rdquo; to start talking to your coach.
+          Tap &ldquo;Start a new conversation&rdquo; above, or log a workout and
+          ask your coach about it.
         </p>
         <Link
           href="/home"
@@ -39,31 +45,46 @@ export function ChatList({ threads }: ChatListProps) {
 
   return (
     <div className="space-y-2">
-      {threads.map((thread) => (
-        <Link
-          key={thread.workoutLogId}
-          href={`/coach/${thread.workoutLogId}`}
-          className="flex items-center gap-4 rounded-3xl bg-white dark:bg-slate-900 p-4 shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-slate-800"
-        >
-          <div className="h-10 w-10 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
-            <MessageSquare className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-gray-900 dark:text-white capitalize">
-                {thread.workoutType} — {formatDate(thread.performedAt)}
-              </p>
-              <span className="text-xs text-gray-400 ml-2 flex-shrink-0">
-                {thread.messageCount} msg{thread.messageCount !== 1 ? "s" : ""}
-              </span>
+      {threads.map((thread) => {
+        // Workout debriefs get the existing icon + capitalized type/date
+        // headline. General threads get a Sparkles icon + the thread title
+        // (which is generated as "General chat — <date>" so multiple
+        // generals stay distinguishable).
+        const isWorkout = thread.kind === "workout";
+        const Icon = isWorkout ? MessageSquare : Sparkles;
+        const headline = isWorkout
+          ? `${thread.workoutType ?? "Workout"} — ${formatDate(thread.performedAt) ?? "(no date)"}`
+          : thread.title;
+        const subline = thread.lastMessage?.trim()
+          ? thread.lastMessage
+          : "No messages yet — tap to start.";
+
+        return (
+          <Link
+            key={thread.id}
+            href={`/coach/${thread.id}`}
+            className="flex items-center gap-4 rounded-3xl bg-white dark:bg-slate-900 p-4 shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-slate-800"
+          >
+            <div className="h-10 w-10 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
+              <Icon className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
             </div>
-            <p className="text-sm text-gray-500 dark:text-gray-400 truncate mt-0.5">
-              {thread.lastMessage}
-            </p>
-          </div>
-          <ChevronRight className="h-4 w-4 text-gray-400 flex-shrink-0" />
-        </Link>
-      ))}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-900 dark:text-white capitalize truncate">
+                  {headline}
+                </p>
+                <span className="text-xs text-gray-400 ml-2 flex-shrink-0">
+                  {thread.messageCount} msg{thread.messageCount !== 1 ? "s" : ""}
+                </span>
+              </div>
+              <p className="text-sm text-gray-500 dark:text-gray-400 truncate mt-0.5">
+                {subline}
+              </p>
+            </div>
+            <ChevronRight className="h-4 w-4 text-gray-400 flex-shrink-0" />
+          </Link>
+        );
+      })}
     </div>
   );
 }

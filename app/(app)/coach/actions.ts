@@ -287,7 +287,7 @@ export async function applyChatAction(actionId: string): Promise<Result> {
     }
 
     revalidatePath("/coach");
-    revalidatePath("/coach/[workoutLogId]", "page");
+    revalidatePath("/coach/[threadId]", "page");
     revalidatePath("/home");
     revalidatePath("/roadmap");
     return { success: true };
@@ -314,7 +314,7 @@ export async function declineChatAction(actionId: string): Promise<Result> {
       .where(eq(coachChatActions.id, actionId));
 
     revalidatePath("/coach");
-    revalidatePath("/coach/[workoutLogId]", "page");
+    revalidatePath("/coach/[threadId]", "page");
     return { success: true };
   } catch (e) {
     console.error("[declineChatAction] error:", e);
@@ -409,7 +409,7 @@ export async function revertChatAction(actionId: string): Promise<Result> {
     }
 
     revalidatePath("/coach");
-    revalidatePath("/coach/[workoutLogId]", "page");
+    revalidatePath("/coach/[threadId]", "page");
     revalidatePath("/home");
     revalidatePath("/roadmap");
     return { success: true };
@@ -430,21 +430,17 @@ export type ChatActionView = {
   status: "pending" | "approved" | "declined" | "reverted";
 };
 
-export async function getActionsForThread(workoutLogId: string): Promise<ChatActionView[]> {
+export async function getActionsForThread(threadId: string): Promise<ChatActionView[]> {
   try {
     const auth = await authedUserId();
     if (!auth.ok) return [];
     const { userId } = auth;
 
-    const isGeneral = workoutLogId === "general";
-
     // Two-query approach: first find the chat message ids for this thread,
     // then pull the actions tied to any of them. Avoids a fragile join.
     const threadMessages = await db.query.coachChatMessages.findMany({
-      where: (m, { eq: e, and: a, isNull }) =>
-        isGeneral
-          ? a(e(m.userId, userId), isNull(m.workoutLogId))
-          : a(e(m.userId, userId), e(m.workoutLogId, workoutLogId)),
+      where: (m, { eq: e, and: a }) =>
+        a(e(m.userId, userId), e(m.threadId, threadId)),
       columns: { id: true },
     });
     if (threadMessages.length === 0) return [];

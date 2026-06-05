@@ -12,7 +12,12 @@ interface DoneStateProps {
   onBack: () => void;
   /** Returns the coach's reply text. */
   onChat: (message: string) => Promise<string>;
-  workoutLogId: string | null;
+  /**
+   * coach_threads.id for this workout's debrief thread. Post-0007 the chat
+   * coach is keyed by thread, not workout — so getChatHistory + coachChatTurn
+   * both want the thread id, not the workout log id.
+   */
+  threadId: string | null;
 }
 
 interface ChatMessage {
@@ -26,7 +31,7 @@ export default function DoneState({
   adjustments,
   onBack,
   onChat,
-  workoutLogId,
+  threadId,
 }: DoneStateProps) {
   const t = useTranslations();
   const [showChat, setShowChat] = useState(false);
@@ -35,16 +40,18 @@ export default function DoneState({
   const [isSending, setIsSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Hydrate chat history from DB on mount
+  // Hydrate chat history from DB on mount. Now keyed by threadId — the
+  // workout-debrief thread for today's workout was created server-side at
+  // log time (or page load) and passed in via the threadId prop.
   useEffect(() => {
-    if (!workoutLogId) return;
-    getChatHistory(workoutLogId, 40).then((msgs) => {
+    if (!threadId) return;
+    getChatHistory(threadId, 40).then((msgs) => {
       if (msgs.length > 0) {
         setChatMessages(msgs.map((m) => ({ id: m.id, role: m.role, content: m.content })));
         setShowChat(true);
       }
     });
-  }, [workoutLogId]);
+  }, [threadId]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -57,7 +64,7 @@ export default function DoneState({
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim() || isSending || !workoutLogId) return;
+    if (!chatInput.trim() || isSending || !threadId) return;
 
     const userMessage = chatInput.trim();
     setChatInput("");

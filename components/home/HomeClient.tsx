@@ -63,6 +63,12 @@ export interface HomeClientProps {
   todayLogCount: number;
   aiSummary: string | null;
   workoutLogId: string | null;
+  /**
+   * coach_threads.id for today's workout debrief, or null if no workout
+   * is logged for today. Drives the inline DoneState chat panel + the
+   * lastChatMessages preview. Created lazily server-side at page load.
+   */
+  threadId: string | null;
   fitYesterday: { steps: number | null; activeMinutes: number | null } | null;
   nextSession: { title: string; date: Date; plan: SessionPlan } | null;
   lastChatMessages: { role: string; content: string }[];
@@ -85,7 +91,11 @@ export default function HomeClient({
   loggedToday,
   todayLogCount,
   aiSummary,
-  workoutLogId: initialWorkoutLogId,
+  // workoutLogId is still accepted as a prop for back-compat with the page
+  // server component, but it's no longer needed in the client — every chat
+  // call now routes through threadId. Prefix with `_` to silence eslint.
+  workoutLogId: _workoutLogId,
+  threadId: initialThreadId,
   fitYesterday,
   nextSession,
   lastChatMessages,
@@ -94,7 +104,7 @@ export default function HomeClient({
 }: HomeClientProps) {
   const [state, setState] = useState<HomeState>("pre-workout");
   const [workoutResult, setWorkoutResult] = useState<WorkoutResult | null>(null);
-  const [workoutLogId, setWorkoutLogId] = useState<string | null>(initialWorkoutLogId);
+  const [threadId, setThreadId] = useState<string | null>(initialThreadId);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [runEndData, setRunEndData] = useState<RunEndData | null>(null);
@@ -230,7 +240,11 @@ export default function HomeClient({
         });
         if (result.success) {
           setWorkoutResult({ summary: result.summary, adjustments: result.adjustments });
-          setWorkoutLogId(result.workoutLogId);
+          // Capture the thread id from the log result so the DoneState
+          // chat panel addresses the right thread on the very first message.
+          // Empty string means logManualWorkout couldn't create the thread
+          // (rare; non-fatal) — fall back to null so DoneState's guards fire.
+          setThreadId(result.threadId || null);
           setState("done");
         } else {
           console.error("Failed to log workout:", result.error);
@@ -255,16 +269,19 @@ export default function HomeClient({
   const handleDoneBack = useCallback(() => {
     setState("pre-workout");
     setRunEndData(null);
-    // Reset workout context so a follow-up log starts fresh (Bug #2 guard)
-    setWorkoutLogId(null);
+    // Reset workout context so a follow-up log starts fresh (Bug #2 guard).
+    setThreadId(null);
     setWorkoutResult(null);
   }, []);
 
   const handleDoneChat = useCallback(
     async (message: string): Promise<string> => {
-      if (!workoutLogId) return "";
+      // Post-0007: chat is keyed by threadId. Bail early if the page-load
+      // resolve / log-result didn't populate one — the panel below will
+      // already be in its empty/disabled state.
+      if (!threadId) return "";
       try {
-        const response = await coachChatTurn(message, workoutLogId);
+        const response = await coachChatTurn(message, threadId);
         if ("error" in response) {
           console.error("Chat error:", response.code, response.error);
           switch (response.code) {
@@ -286,7 +303,7 @@ export default function HomeClient({
         return "Sorry, something went wrong. Please try again.";
       }
     },
-    [workoutLogId],
+    [threadId],
   );
 
   const sessionTitle = todayPlan?.title ?? "Today's Run";
@@ -376,7 +393,7 @@ export default function HomeClient({
           adjustments={workoutResult?.adjustments ?? []}
           onBack={handleDoneBack}
           onChat={handleDoneChat}
-          workoutLogId={workoutLogId}
+          threadId={threadId}
         />
       )}
     </div>

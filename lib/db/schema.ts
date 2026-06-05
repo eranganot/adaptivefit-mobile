@@ -248,13 +248,54 @@ export const workoutPhotos = pgTable("workout_photos", {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// coach_chat_messages — continuation conversation after a workout
+// coach_threads — one row per chat thread (general OR workout debrief)
 // ─────────────────────────────────────────────────────────────────
+// Added in 0007. Each "Start a new conversation" click inserts a fresh row
+// here, so the UI starts empty instead of replaying accumulated history.
+// Workout-debrief threads carry a non-null workout_log_id; general threads
+// leave it NULL.
+export const coachThreads = pgTable(
+  "coach_threads",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    // Non-null = workout-debrief thread. SET NULL preserves the thread row
+    // (and the user's messages) when a workout is deleted.
+    workoutLogId: uuid("workout_log_id").references(() => workoutLogs.id, {
+      onDelete: "set null",
+    }),
+    title: text("title"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userLastMessageIdx: index("coach_threads_user_last_message_idx").on(
+      t.userId,
+      t.lastMessageAt,
+    ),
+    userWorkoutLogIdx: index("coach_threads_user_workout_log_idx").on(
+      t.userId,
+      t.workoutLogId,
+    ),
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────
+// coach_chat_messages — chat history, now keyed by thread_id
+// ─────────────────────────────────────────────────────────────────
+// `workoutLogId` is kept for denormalised convenience (queries that want to
+// know which workout a message references can skip the join) but is NO
+// LONGER the thread identifier — `threadId` is. See migration 0007.
 export const coachChatMessages = pgTable(
   "coach_chat_messages",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    // Added in 0007. Backfilled then made NOT NULL — drizzle treats this as
+    // a required field for new inserts.
+    threadId: uuid("thread_id").notNull().references(() => coachThreads.id, {
+      onDelete: "cascade",
+    }),
     workoutLogId: uuid("workout_log_id").references(() => workoutLogs.id, {
       onDelete: "set null",
     }),
@@ -271,6 +312,10 @@ export const coachChatMessages = pgTable(
     userWorkoutIdx: index("coach_chat_user_workout_idx").on(
       t.userId,
       t.workoutLogId,
+      t.createdAt,
+    ),
+    threadIdx: index("coach_chat_messages_thread_idx").on(
+      t.threadId,
       t.createdAt,
     ),
   }),
@@ -479,6 +524,8 @@ export type TrainingRoadmap = typeof trainingRoadmap.$inferSelect;
 export type NewTrainingRoadmap = typeof trainingRoadmap.$inferInsert;
 export type ColdStartAnalysis = typeof coldStartAnalysis.$inferSelect;
 export type WorkoutPhoto = typeof workoutPhotos.$inferSelect;
+export type CoachThread = typeof coachThreads.$inferSelect;
+export type NewCoachThread = typeof coachThreads.$inferInsert;
 export type CoachChatMessage = typeof coachChatMessages.$inferSelect;
 export type NewCoachChatMessage = typeof coachChatMessages.$inferInsert;
 export type CoachChatAction = typeof coachChatActions.$inferSelect;

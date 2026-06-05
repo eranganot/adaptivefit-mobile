@@ -15,6 +15,7 @@ import {
   strengthLogs,
   fitSessions,
 } from "@/lib/db/schema";
+import { getThread, touchThread, listThreads, getOrCreateWorkoutThread } from "@/lib/coach/threads";
 import {
   summarizeExternalActivity,
   formatExternalActivityForPrompt,
@@ -35,7 +36,19 @@ import { revalidatePath } from "next/cache";
 import { gemini, MODELS } from "@/lib/gemini/client";
 
 export type LogResult =
-  | { success: true; workoutLogId: string; summary: string; adjustments: string[] }
+  | {
+      success: true;
+      workoutLogId: string;
+      /**
+       * coach_threads.id for this workout's debrief thread. Created on log
+       * if it didn't exist. Use this (NOT workoutLogId) for any subsequent
+       * coachChatTurn / getChatHistory calls — the chat coach is now keyed
+       * by thread, with workoutLogId as a denormalised anchor on the row.
+       */
+      threadId: string;
+      summary: string;
+      adjustments: string[];
+    }
   | { success: false; error: string };
 
 /** Mirror of workout_logs.type enum. Kept in sync manually with schema.ts —
@@ -414,10 +427,32 @@ export async function logManualWorkout(input: {
       console.error("summarizePostWorkout non-fatal:", e);
     }
 
+    // Create the workout's debrief thread up-front so the post-workout chat
+    // panel + the /coach landing page's "Chat about your latest workout" CTA
+    // both land on the SAME row. Idempotent: getOrCreateWorkoutThread returns
+    // the existing thread if one is already there.
+    //
+    // Non-fatal — if thread creation fails we still return success on the
+    // workout log itself; the chat UI will fail gracefully (the user can
+    // still open /coach and create a thread from there).
+    let resolvedThreadId = "";
+    try {
+      const t = await getOrCreateWorkoutThread(user.id, log.id);
+      resolvedThreadId = t.id;
+    } catch (e) {
+      console.error("getOrCreateWorkoutThread (logManualWorkout) non-fatal:", e);
+    }
+
     revalidatePath("/home");
     revalidatePath("/roadmap");
 
-    return { success: true, workoutLogId: log.id, summary, adjustments };
+    return {
+      success: true,
+      workoutLogId: log.id,
+      threadId: resolvedThreadId,
+      summary,
+      adjustments,
+    };
   } catch (err) {
     console.error("logManualWorkout error:", err);
     return { success: false, error: err instanceof Error ? err.message : "Unknown error" };
@@ -441,13 +476,8 @@ const CHAT_CONTEXT_WINDOW = 20;
 
 export async function coachChatTurn(
   message: string,
-  workoutLogId: string,
+  threadId: string,
 ): Promise<CoachChatResult> {
-  // "general" sentinel → null workoutLogId in the DB. The chat works without
-  // a specific workout context (no per-workout details in the prompt).
-  const isGeneral = workoutLogId === "general";
-  const dbWorkoutLogId: string | null = isGeneral ? null : workoutLogId;
-
   // 1. Auth + user lookup
   let userId: string;
   let displayName: string | null = null;
@@ -464,21 +494,36 @@ export async function coachChatTurn(
     return { error: err instanceof Error ? err.message : "Auth error", code: "auth" };
   }
 
+  // 1b. Resolve thread + ownership. If the thread doesn't belong to this
+  // user (or doesn't exist), refuse — the URL is forged or stale. The
+  // workout-anchor is derived from the thread row, not the URL, so the
+  // coach context (workoutContext block) is automatically right for the
+  // thread regardless of how the user got there.
+  const thread = await getThread(userId, threadId);
+  if (!thread) {
+    return { error: "Conversation not found", code: "auth" };
+  }
+  const dbWorkoutLogId: string | null = thread.workoutLogId;
+
   // Resolve the athlete's display name once, used in both stateContext (for
   // the external-sessions section below) and the systemInstruction further
   // down. Hoisted here so both scopes can reference it without redefinition.
   const athleteName = displayName?.trim() || "Eran";
 
-  // 2. Hard-cap check (rare safety net, not a typical-conversation limit)
+  // 2. Hard-cap check (rare safety net, not a typical-conversation limit).
+  // Scoped to this thread — each thread has its own 50-turn budget. Users
+  // hitting the cap can just start a new conversation; the cap is mostly
+  // a runaway-cost safety net.
   try {
-    const existing = await db.select().from(coachChatMessages).where(
-      and(
-        eq(coachChatMessages.userId, userId),
-        dbWorkoutLogId === null
-          ? sql`${coachChatMessages.workoutLogId} IS NULL`
-          : eq(coachChatMessages.workoutLogId, dbWorkoutLogId),
-      ),
-    );
+    const existing = await db
+      .select({ id: coachChatMessages.id })
+      .from(coachChatMessages)
+      .where(
+        and(
+          eq(coachChatMessages.userId, userId),
+          eq(coachChatMessages.threadId, threadId),
+        ),
+      );
     if (existing.length >= CHAT_HARD_CAP_MESSAGES) {
       return {
         error: `Chat thread reached ${CHAT_HARD_CAP_MESSAGES / 2}-turn safety cap`,
@@ -500,7 +545,13 @@ export async function coachChatTurn(
   // below can pass it to the summarizer.
   let pendingAmbiguousLines: string[] = [];
   try {
-    await db.insert(coachChatMessages).values({ userId, workoutLogId: dbWorkoutLogId, role: "user", content: message });
+    await db.insert(coachChatMessages).values({
+      userId,
+      threadId,
+      workoutLogId: dbWorkoutLogId, // denormalised; thread is the source of truth
+      role: "user",
+      content: message,
+    });
 
     // Load last N (CHAT_CONTEXT_WINDOW), reverse to oldest-first.
     // The user's just-inserted message is the last entry; we'll strip it before
@@ -511,9 +562,7 @@ export async function coachChatTurn(
       .from(coachChatMessages)
       .where(and(
         eq(coachChatMessages.userId, userId),
-        dbWorkoutLogId === null
-          ? sql`${coachChatMessages.workoutLogId} IS NULL`
-          : eq(coachChatMessages.workoutLogId, dbWorkoutLogId),
+        eq(coachChatMessages.threadId, threadId),
       ))
       .orderBy(desc(coachChatMessages.createdAt))
       .limit(CHAT_CONTEXT_WINDOW);
@@ -1027,12 +1076,22 @@ export async function coachChatTurn(
       .insert(coachChatMessages)
       .values({
         userId,
+        threadId,
         workoutLogId: dbWorkoutLogId,
         role: "assistant",
         content: reply,
         modelUsed: modelName,
       })
       .returning({ id: coachChatMessages.id });
+
+    // Bump the thread's lastMessageAt so it floats to the top of the ChatList.
+    // Non-fatal: if this fails the ChatList ordering is slightly stale but
+    // the chat itself is fine.
+    try {
+      await touchThread(threadId);
+    } catch (e) {
+      console.warn("[coachChatTurn] touchThread non-fatal:", e);
+    }
 
     if (savedAssistant && functionCalls.length > 0) {
       // Split out `classifySession` calls first — those apply IMMEDIATELY
@@ -1105,9 +1164,9 @@ export type ChatMessage = {
   createdAt: Date;
 };
 
-/** Fetch persisted chat messages for a given workout log, oldest-first. */
+/** Fetch persisted chat messages for a given thread, oldest-first. */
 export async function getChatHistory(
-  workoutLogId: string,
+  threadId: string,
   limit = 40,
 ): Promise<ChatMessage[]> {
   try {
@@ -1117,16 +1176,13 @@ export async function getChatHistory(
     const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
     if (!user) return [];
 
-    const isGeneral = workoutLogId === "general";
     const rows = await db
       .select()
       .from(coachChatMessages)
       .where(
         and(
           eq(coachChatMessages.userId, user.id),
-          isGeneral
-            ? sql`${coachChatMessages.workoutLogId} IS NULL`
-            : eq(coachChatMessages.workoutLogId, workoutLogId),
+          eq(coachChatMessages.threadId, threadId),
         ),
       )
       .orderBy(coachChatMessages.createdAt)
@@ -1144,16 +1200,35 @@ export async function getChatHistory(
   }
 }
 
+/**
+ * ChatThread view type — used by the coach landing page's ChatList.
+ *
+ * Post-Round-7: this is keyed by `id` (the coach_threads.id, which is now
+ * the URL slug for /coach/<id>) rather than workoutLogId. We keep
+ * workoutLogId in the type so the ChatList can still show the anchor
+ * workout's type/date when it's a workout-debrief thread.
+ */
 export type ChatThread = {
-  workoutLogId: string;
-  performedAt: Date;
-  workoutType: string;
+  /** coach_threads.id — use this as the /coach/<id> route param. */
+  id: string;
+  kind: "general" | "workout";
+  /** Non-null for workout-debrief threads only. */
+  workoutLogId: string | null;
+  /** Human-readable title (e.g. "General chat — 4 Jun 2026", "Run debrief — 4 Jun"). */
+  title: string;
+  /** Anchor workout's performed_at (workout threads only). */
+  performedAt: Date | null;
+  /** Anchor workout's type (workout threads only). */
+  workoutType: string | null;
   messageCount: number;
-  lastMessage: string;
+  lastMessage: string | null;
   lastMessageAt: Date;
 };
 
-/** Fetch all workout logs that have at least one coach chat message, newest first. */
+/**
+ * Fetch all chat threads (general + workout-debrief) for the signed-in user,
+ * newest-active-first. Drives the ChatList on /coach.
+ */
 export async function getChatThreads(): Promise<ChatThread[]> {
   try {
     const session = await auth();
@@ -1162,50 +1237,18 @@ export async function getChatThreads(): Promise<ChatThread[]> {
     const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
     if (!user) return [];
 
-    // Get workout logs with chat messages via subquery
-    const rows = await db
-      .select({
-        workoutLogId: coachChatMessages.workoutLogId,
-        messageCount: sql<number>`cast(count(*) as int)`,
-        lastMessage: sql<string>`(array_agg(${coachChatMessages.content} order by ${coachChatMessages.createdAt} desc))[1]`,
-        lastMessageAt: sql<Date>`max(${coachChatMessages.createdAt})`,
-      })
-      .from(coachChatMessages)
-      .where(
-        and(
-          eq(coachChatMessages.userId, user.id),
-          sql`${coachChatMessages.workoutLogId} is not null`,
-        ),
-      )
-      .groupBy(coachChatMessages.workoutLogId)
-      .orderBy(sql`max(${coachChatMessages.createdAt}) desc`)
-      .limit(50);
-
-    // Hydrate workout log metadata for each thread
-    const logIds = rows.map((r) => r.workoutLogId).filter(Boolean) as string[];
-    if (logIds.length === 0) return [];
-
-    const logs = await db
-      .select({ id: workoutLogs.id, performedAt: workoutLogs.performedAt, type: workoutLogs.type })
-      .from(workoutLogs)
-      .where(inArray(workoutLogs.id, logIds));
-
-    const logMap = new Map(logs.map((l) => [l.id, l]));
-
-    return rows
-      .map((r) => {
-        const log = logMap.get(r.workoutLogId!);
-        if (!log) return null;
-        return {
-          workoutLogId: r.workoutLogId!,
-          performedAt: log.performedAt,
-          workoutType: log.type,
-          messageCount: r.messageCount,
-          lastMessage: r.lastMessage,
-          lastMessageAt: r.lastMessageAt,
-        };
-      })
-      .filter(Boolean) as ChatThread[];
+    const threads = await listThreads(user.id, 100);
+    return threads.map((t) => ({
+      id: t.id,
+      kind: t.kind,
+      workoutLogId: t.workoutLogId,
+      title: t.title,
+      performedAt: t.performedAt,
+      workoutType: t.workoutType,
+      messageCount: t.messageCount,
+      lastMessage: t.lastMessage,
+      lastMessageAt: t.lastMessageAt,
+    }));
   } catch (err) {
     console.error("getChatThreads error:", err);
     return [];

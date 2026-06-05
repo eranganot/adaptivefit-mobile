@@ -60,9 +60,13 @@ AdaptiveFit is a self-hosted coaching app that replaces a Gemini chat workflow w
 | Analytics | `/analytics` | Per-category charts, daily activity chart, coach level, stat tiles |
 | Settings | `/settings` (header gear) | Language, theme, multi-goal management, weight log, level override, Health Connect sync |
 
-### Per-thread workout coach
+### Multi-thread chat coach
 
-Every workout log gets its own coach thread at `/coach/[workoutLogId]`. The general (workout-agnostic) thread lives at `/coach/general` and carries broader chat history.
+Every chat conversation lives in `coach_threads`. URLs are `/coach/<thread-id>` where the id is the row's UUID. Two kinds:
+- **Workout debriefs** — one thread per workout (find-or-create), anchored to a `workout_log_id`. Auto-created on workout log. The "Chat about your latest workout" CTA lands here.
+- **General chats** — `workout_log_id` is null. The "Start a new conversation" button POSTs to `/coach/new` and inserts a fresh row each click, so the UI is always empty on entry.
+
+Legacy URLs (`/coach/general`, `/coach/<workout-log-uuid>`) redirect to the right thread for back-compat with bookmarks. Migration 0007 backfilled existing chat history into one general thread + one workout thread per (user, workout).
 
 ---
 

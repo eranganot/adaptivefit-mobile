@@ -14,7 +14,15 @@ import {
 } from "@/app/(app)/coach/actions";
 
 interface ChatThreadProps {
-  workoutLogId: string;
+  /** coach_threads.id — the actual thread identifier used by coachChatTurn. */
+  threadId: string;
+  /**
+   * Anchor workout for workout-debrief threads, or null for general threads.
+   * Currently only used to label the header ("Workout debrief" vs "Coach chat");
+   * server-side, the thread row IS the workout link so we don't have to pass
+   * workoutLogId in tool calls or queries.
+   */
+  workoutLogId: string | null;
   initialMessages: ChatMessage[];
   initialActions: ChatActionView[];
 }
@@ -22,7 +30,7 @@ interface ChatThreadProps {
 // Hebrew Unicode block — for detecting RTL content and mirroring layout.
 const HEBREW_RE = /[֐-׿]/;
 
-export function ChatThread({ workoutLogId, initialMessages, initialActions }: ChatThreadProps) {
+export function ChatThread({ threadId, workoutLogId, initialMessages, initialActions }: ChatThreadProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [actions, setActions] = useState<ChatActionView[]>(initialActions);
@@ -145,7 +153,7 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
     setIsSending(true);
 
     try {
-      const result = await coachChatTurn(text, workoutLogId);
+      const result = await coachChatTurn(text, threadId);
       let replyText: string;
       if ("error" in result) {
         // Per-code user-facing copy. For "gemini" errors the server now
@@ -219,7 +227,9 @@ export function ChatThread({ workoutLogId, initialMessages, initialActions }: Ch
         </div>
         <div>
           <p className="text-sm font-semibold text-gray-900 dark:text-white">Coach AI</p>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Workout debrief</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {workoutLogId ? "Workout debrief" : "General chat"}
+          </p>
         </div>
       </div>
 
