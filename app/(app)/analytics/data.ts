@@ -120,13 +120,21 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
       .groupBy(sundayExpr)
       .orderBy(asc(sundayExpr)),
 
-    // ── Most recent 20 sessions for trend chart ──────────────────────────
-    // Was: orderBy(asc(performedAt)).limit(20) — that returned the OLDEST
-    // 20 sessions ever logged. Once the user had more than 20 workouts on
-    // record, recent sessions (with their distance + pace) never made it
-    // into the chart and the trend showed only stale history. Fix: pull
-    // the newest 20 via DESC, then reverse client-side for the chart's
-    // left-to-right (oldest → newest) rendering convention.
+    // ── Most recent 20 RUN sessions for the trend chart ──────────────────
+    // The chart shows RPE × Pace and Dist × Pace — both intrinsically
+    // run-only metrics. Strength / mobility / other sessions have null
+    // distance and null pace by design, so mixing them in the same query
+    // (a) crowded out recent runs from the LIMIT 20 window, and (b) left
+    // the RPE line covered in points with no matching pace/distance —
+    // the user's "where are my pace dots?" complaint. Filter to
+    // type='run' so every point on the line has its corresponding
+    // run-metric data available (when the row was logged with those
+    // fields).
+    //
+    // Earlier bug: orderBy(asc()) returned the OLDEST 20 logs ever. Once
+    // history grew past 20, recent runs never made the cut. Now: DESC +
+    // limit 20, then reverse client-side for the chart's left-to-right
+    // oldest→newest rendering convention.
     db
       .select({
         performedAt: workoutLogs.performedAt,
@@ -138,7 +146,7 @@ export async function getAnalyticsData(): Promise<AnalyticsData | null> {
         rtl: workoutLogs.rtl,
       })
       .from(workoutLogs)
-      .where(eq(workoutLogs.userId, user.id))
+      .where(and(eq(workoutLogs.userId, user.id), eq(workoutLogs.type, "run")))
       .orderBy(desc(workoutLogs.performedAt))
       .limit(20),
 
