@@ -1,25 +1,41 @@
-// Capacitor 6 plugins were authored before AGP 8.7 forbade
-// `getDefaultProguardFile('proguard-android.txt')`. Rather than patching every
-// plugin's build.gradle in node_modules (which Windows' 260-char path limit
-// makes painful, and which pnpm wipes on every install), this init-time
-// hook rewrites the proguard config of every subproject as it's evaluated.
+// Capacitor 6 plugins were authored before AGP 8.7 / Gradle 9 forbade
+// `getDefaultProguardFile('proguard-android.txt')` (it bundles `-dontoptimize`,
+// which R8 now rejects). This project runs AGP 9.x + Gradle 9.4, so any plugin
+// that still calls it fails *during evaluation* with:
+//   "'getDefaultProguardFile('proguard-android.txt')' is no longer supported".
 //
-// Applied from android/build.gradle.
-subprojects { proj ->
-    proj.afterEvaluate {
-        if (proj.plugins.hasPlugin('com.android.library') ||
-            proj.plugins.hasPlugin('com.android.application')) {
-            proj.android.buildTypes.all { bt ->
-                def replaced = bt.proguardFiles.collect { f ->
-                    f.name == 'proguard-android.txt'
-                        ? getDefaultProguardFile('proguard-android-optimize.txt')
-                        : f
-                }
-                if (replaced != bt.proguardFiles.toList()) {
-                    bt.proguardFiles.clear()
-                    bt.proguardFiles(*replaced.toArray())
-                }
-            }
-        }
+// An `afterEvaluate` hook can't fix this — the exception is thrown WHILE the
+// plugin's build.gradle is being evaluated, before any afterEvaluate runs. So
+// instead we rewrite the offending line ON DISK, here, during root-project
+// configuration — which Gradle runs BEFORE it configures any subproject.
+//
+// Why not a pnpm patch? The patched-package directory name pnpm generates
+// (…@6.1.3_patch_hash=…_@capacitor+core@6.2.1\…) pushes the absolute path past
+// Windows' 260-char MAX_PATH limit and `pnpm install` dies with ENAMETOOLONG.
+// Rewriting the file in place avoids creating any new long path, is idempotent,
+// and simply re-applies on the next build after a `pnpm install` restores the
+// original.
+//
+// Applied from android/build.gradle (root), before `allprojects {}`.
+
+def proguardNeedle = "getDefaultProguardFile('proguard-android.txt')"
+def proguardFixed  = "getDefaultProguardFile('proguard-android-optimize.txt')"
+// Also handle the double-quoted form, just in case a plugin uses it.
+def proguardNeedleDq = 'getDefaultProguardFile("proguard-android.txt")'
+def proguardFixedDq  = 'getDefaultProguardFile("proguard-android-optimize.txt")'
+
+// `rootProject.subprojects` is populated after settings.gradle runs (project
+// hierarchy is known) but before the subprojects are configured. Reading
+// `projectDir` does not trigger their configuration.
+rootProject.subprojects.each { proj ->
+    def bg = new File(proj.projectDir, "build.gradle")
+    if (!bg.exists()) return
+    def original = bg.getText("UTF-8")
+    def fixed = original
+        .replace(proguardNeedle, proguardFixed)
+        .replace(proguardNeedleDq, proguardFixedDq)
+    if (fixed != original) {
+        bg.setText(fixed, "UTF-8")
+        rootProject.logger.lifecycle("[proguard-fix] rewrote legacy proguard file in ${bg}")
     }
 }

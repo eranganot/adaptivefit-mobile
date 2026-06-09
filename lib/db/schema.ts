@@ -197,7 +197,7 @@ export const trainingRoadmap = pgTable("training_roadmap", {
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
   weekIndex: integer("week_index").notNull(),
-  dayIndex: integer("day_index").notNull(), // 0=Mon..6=Sun
+  dayIndex: integer("day_index").notNull(), // 0=Sun..6=Sat (week anchor = Sunday)
   sessionPlan: jsonb("session_plan").notNull(), // {title, blocks:[...], warmup, mobility}
   status: text("status", {
     enum: ["pending", "completed", "skipped", "modified"],

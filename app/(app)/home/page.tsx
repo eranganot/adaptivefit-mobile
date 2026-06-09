@@ -9,6 +9,7 @@ import HomeClient from "@/components/home/HomeClient";
 import { getPendingColdStart, ensureColdStartExists } from "./coldStartActions";
 import { getPendingClassifications } from "./sessionClassificationActions";
 import { getOrCreateWorkoutThread } from "@/lib/coach/threads";
+import { startOfWeekSunday } from "@/lib/dates/week";
 
 export default async function HomePage() {
   const session = await auth();
@@ -83,10 +84,7 @@ export default async function HomePage() {
   let nextSession: { title: string; date: Date; plan: SessionPlan } | null = null;
   try {
     const today = new Date();
-    const dayOfWeek = today.getDay();
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfWeek = startOfWeekSunday(today);
 
     const todayMidnight = new Date(today);
     todayMidnight.setHours(0, 0, 0, 0);

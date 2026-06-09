@@ -102,16 +102,17 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
 
   const sessionsToCreate = [];
 
-  // Compute today's day-of-week as Mon=0..Sun=6 so we can skip past sessions
-  // in week 0 (regen often runs mid-week → Tuesday is already in the past).
-  const todayJsDow = new Date().getDay();
-  const todayDayIndex = todayJsDow === 0 ? 6 : todayJsDow - 1; // Mon=0..Sun=6
+  // Compute today's day-of-week as Sun=0..Sat=6 (week anchor = Sunday) so we
+  // can skip past sessions in week 0 (regen often runs mid-week → Tuesday may
+  // already be in the past). getDay() is already Sun=0, so no remap needed.
+  const todayDayIndex = new Date().getDay(); // Sun=0..Sat=6
 
   for (let weekIdx = 0; weekIdx < 2; weekIdx++) {
     const pd = periodize({ weekIndex: weekIdx, targetDate });
 
-    // Tuesday (dayIndex 1) — quality / push day. Skip if Tue is already past in week 0.
-    if (weekIdx > 0 || todayDayIndex <= 1) {
+    // Tuesday (dayIndex 2 under Sun-anchored weeks) — quality / push day.
+    // Skip if Tue is already past in week 0.
+    if (weekIdx > 0 || todayDayIndex <= 2) {
       const tueResult = evaluateCoach({
         recentLogs,
         state: simulatedState,
@@ -125,7 +126,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
         userId,
         goalId: activeGoal?.id ?? null,
         weekIndex: weekIdx,
-        dayIndex: 1, // Tuesday
+        dayIndex: 2, // Tuesday (Sun=0 anchor)
         sessionPlan: tueResult.todayPlan,
         status: "pending" as const,
         source: "auto" as const,
@@ -134,8 +135,9 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
       simulatedState = advanceState(simulatedState, tueResult.newState);
     }
 
-    // Friday (dayIndex 4) — endurance / pull+legs day. Skip if Fri is already past in week 0.
-    if (weekIdx > 0 || todayDayIndex <= 4) {
+    // Friday (dayIndex 5 under Sun-anchored weeks) — endurance / pull+legs day.
+    // Skip if Fri is already past in week 0.
+    if (weekIdx > 0 || todayDayIndex <= 5) {
       const friResult = evaluateCoach({
         recentLogs,
         state: simulatedState,
@@ -149,7 +151,7 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
         userId,
         goalId: activeGoal?.id ?? null,
         weekIndex: weekIdx,
-        dayIndex: 4, // Friday
+        dayIndex: 5, // Friday (Sun=0 anchor)
         sessionPlan: friResult.todayPlan,
         status: "pending" as const,
         source: "auto" as const,

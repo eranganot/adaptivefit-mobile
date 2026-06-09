@@ -30,6 +30,7 @@
     "@capacitor/android": "^6.2.1",
     "@capacitor/core": "^6.2.1",
     "@capacitor/geolocation": "^6.1.1",
+    "@capacitor/local-notifications": "^6.1.0",
     "@google/generative-ai": "^0.21.0",
     "@hookform/resolvers": "^3.9.0",
     "@kiwi-health/capacitor-health-connect": "^0.0.40",

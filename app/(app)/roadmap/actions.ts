@@ -7,6 +7,7 @@ import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { regenerateRoadmapForUser } from "@/lib/roadmap/regenerate";
 import type { SessionPlan } from "@/lib/coach";
+import { startOfWeekSunday } from "@/lib/dates/week";
 
 export async function regenerateRoadmap(userId: string): Promise<void> {
   const session = await auth();
@@ -120,12 +121,9 @@ export async function addManualRoadmapSession(input: {
     const user = await db.query.users.findFirst({ where: eq(users.email, session.user.email) });
     if (!user) return { success: false, error: "User not found" };
 
-    // Compute weekIndex / dayIndex relative to this Monday
+    // Compute weekIndex / dayIndex relative to this Sunday (week anchor)
     const today = new Date();
-    const dow = today.getDay();
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
-    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfWeek = startOfWeekSunday(today);
 
     const targetDateObj = new Date(input.targetDate);
     targetDateObj.setHours(0, 0, 0, 0);
@@ -205,7 +203,7 @@ export async function deleteRoadmapSession(
 
 /**
  * Update a roadmap session's scheduled date and/or title.
- * newDate: ISO date string "YYYY-MM-DD" — converted to weekIndex/dayIndex relative to this Monday.
+ * newDate: ISO date string "YYYY-MM-DD" — converted to weekIndex/dayIndex relative to this Sunday.
  * newTitle: optional replacement for sessionPlan.title.
  */
 export async function updateRoadmapSession(
@@ -230,10 +228,7 @@ export async function updateRoadmapSession(
     // Compute new weekIndex / dayIndex from the chosen date
     if (updates.newDate) {
       const today = new Date();
-      const dow = today.getDay();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
-      startOfWeek.setHours(0, 0, 0, 0);
+      const startOfWeek = startOfWeekSunday(today);
 
       const newDateObj = new Date(updates.newDate);
       newDateObj.setHours(0, 0, 0, 0);

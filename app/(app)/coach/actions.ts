@@ -25,6 +25,7 @@ import {
 } from "@/lib/db/schema";
 import type { SessionPlan } from "@/lib/coach";
 import { regenerateRoadmapForUser } from "@/lib/roadmap/regenerate";
+import { startOfWeekSunday } from "@/lib/dates/week";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -180,7 +181,7 @@ export async function applyChatAction(actionId: string): Promise<Result> {
           .where(eq(userLevelState.userId, userId));
       }
     } else if (row.actionType === "add_session") {
-      // Compute weekIndex / dayIndex relative to this Monday.
+      // Compute weekIndex / dayIndex relative to this Sunday (week anchor).
       const targetDate = String(params.targetDate ?? "");
       const title = String(params.title ?? "Custom session");
       const distanceKm = Number(params.distanceKm ?? 5);
@@ -188,10 +189,7 @@ export async function applyChatAction(actionId: string): Promise<Result> {
       if (!targetDate) return { success: false, error: "Missing targetDate" };
 
       const today = new Date();
-      const dow = today.getDay();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
-      startOfWeek.setHours(0, 0, 0, 0);
+      const startOfWeek = startOfWeekSunday(today);
 
       const targetDateObj = new Date(targetDate);
       targetDateObj.setHours(0, 0, 0, 0);

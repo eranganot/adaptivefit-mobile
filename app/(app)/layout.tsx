@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { BottomNav } from "@/components/custom/BottomNav";
 import { ThemeGuard } from "@/components/custom/ThemeGuard";
 import { HealthConnectAutoSync } from "@/components/custom/HealthConnectAutoSync";
+import { WorkoutNotificationScheduler } from "@/components/custom/WorkoutNotificationScheduler";
 import { Settings } from "lucide-react";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -52,6 +53,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <BottomNav />
       <ThemeGuard />
       <HealthConnectAutoSync />
+      <WorkoutNotificationScheduler />
     </div>
   );
 }

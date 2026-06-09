@@ -86,6 +86,22 @@
     <!-- screen is off. The plugin uses this internally. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- ── Local notifications (workout reminders) ────────────────────── -->
+    <!-- @capacitor/local-notifications declares POST_NOTIFICATIONS (already -->
+    <!-- present above for the foreground-service notification) and its own -->
+    <!-- AlarmReceiver / boot receiver. We add the exact-alarm permissions   -->
+    <!-- here so scheduled reminders fire at the precise minute instead of    -->
+    <!-- being batched by Doze. SCHEDULE_EXACT_ALARM covers Android 12 (API   -->
+    <!-- 31); USE_EXACT_ALARM covers Android 13+ (API 33+) and is auto-granted -->
+    <!-- — Play Store restricts USE_EXACT_ALARM to alarm/calendar apps, but    -->
+    <!-- this app is sideloaded (single-user), so it's fine here.             -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Re-arm scheduled reminders after a device reboot. The plugin's       -->
+    <!-- LocalNotificationRestoreReceiver listens for BOOT_COMPLETED; without  -->
+    <!-- this permission Android won't deliver that broadcast.                -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- Required feature declaration — Play Store filter, also a hint to -->
     <!-- the OS that we're a location-aware app. -->
     <uses-feature android:name="android.hardware.location.gps" android:required="true" />

@@ -8,5 +8,8 @@ project(':capacitor-community-background-geolocation').projectDir = new File('..
 include ':capacitor-geolocation'
 project(':capacitor-geolocation').projectDir = new File('../node_modules/.pnpm/@capacitor+geolocation@6.1.1_@capacitor+core@6.2.1/node_modules/@capacitor/geolocation/android')
 
+include ':capacitor-local-notifications'
+project(':capacitor-local-notifications').projectDir = new File('../node_modules/.pnpm/@capacitor+local-notifications@6.1.3_@capacitor+core@6.2.1/node_modules/@capacitor/local-notifications/android')
+
 include ':kiwi-health-capacitor-health-connect'
 project(':kiwi-health-capacitor-health-connect').projectDir = new File('../node_modules/.pnpm/@kiwi-health+capacitor-health-connect@0.0.40_@capacitor+core@6.2.1/node_modules/@kiwi-health/capacitor-health-connect/android')

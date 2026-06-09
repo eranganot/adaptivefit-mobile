@@ -28,6 +28,7 @@ import { summarizeCoachContext } from "@/lib/gemini/summarizeContext";
 import { COACH_CHAT_TOOLS, functionNameToActionType } from "@/lib/coach/chatTools";
 import { eq, desc, and, inArray, sql, gte } from "drizzle-orm";
 import type { GoalCategory } from "@/lib/coach";
+import { startOfWeekSunday } from "@/lib/dates/week";
 import { extractFeedback } from "@/lib/gemini/extractFeedback";
 import { summarizePostWorkout } from "@/lib/gemini/summarizePostWorkout";
 import { evaluateCoach } from "@/lib/coach";
@@ -730,10 +731,9 @@ export async function coachChatTurn(
 
     // Today's calendar date in TZ — used to derive each session's actual date.
     const nowInTz = new Date(new Date().toLocaleString("en-US", { timeZone: tz }));
-    const todayJsDow = nowInTz.getDay(); // 0=Sun..6=Sat
-    const startOfWeekTz = new Date(nowInTz);
-    startOfWeekTz.setDate(nowInTz.getDate() - (todayJsDow === 0 ? 6 : todayJsDow - 1));
-    startOfWeekTz.setHours(0, 0, 0, 0);
+    // Week anchor = Sunday (user preference). startOfWeekSunday subtracts
+    // getDay() (0=Sun), so the result is this week's Sunday at local midnight.
+    const startOfWeekTz = startOfWeekSunday(nowInTz);
 
     const upcomingRows = await db.execute(sql`
       SELECT id, week_index, day_index, session_plan->>'title' AS title
@@ -748,7 +748,7 @@ export async function coachChatTurn(
         `\n## Upcoming planned sessions (use these UUIDs in tool calls)\n` +
         upcomingList
           .map((r) => {
-            // Derive calendar date from week_index/day_index relative to this Monday.
+            // Derive calendar date from week_index/day_index relative to this Sunday.
             const d = new Date(startOfWeekTz);
             d.setDate(startOfWeekTz.getDate() + r.week_index * 7 + r.day_index);
             const dateStr = d.toISOString().slice(0, 10);

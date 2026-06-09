@@ -27,6 +27,7 @@ import { archiveGoalById } from "@/lib/goals/actions";
 import type { SettingsGoal } from "./page";
 import { BodyMetricsSection } from "@/components/settings/BodyMetricsSection";
 import type { WeightEntry } from "@/components/settings/BodyMetricsSection";
+import { WorkoutRemindersSection } from "@/components/settings/WorkoutRemindersSection";
 
 interface SettingsClientProps {
   locale: "en" | "he";
@@ -307,6 +308,9 @@ export function SettingsClient({ locale, activeGoals, weightEntries, healthConne
             </button>
           </div>
         </div>
+
+        {/* Section 2b: Workout reminders */}
+        <WorkoutRemindersSection />
 
         {/* Section 3: Goals (R3 — multi-goal) */}
         <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm p-5 space-y-3">

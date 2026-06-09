@@ -3,6 +3,7 @@ import { trainingRoadmap, workoutLogs, goals } from "@/lib/db/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import type { SessionPlan, SessionBlock } from "@/lib/coach";
 import { regenerateRoadmapForUser } from "@/lib/roadmap/regenerate";
+import { startOfWeekSunday } from "@/lib/dates/week";
 
 export type RoadmapSession = {
   id: string;
@@ -34,12 +35,9 @@ export async function getRoadmapData(userId: string): Promise<{
     weekIndex = Math.max(0, weeksDiff);
   }
 
-  // 2. Get the current week boundaries (Monday = week start, index 0)
+  // 2. Get the current week boundaries (Sunday = week start, index 0)
   const today = new Date();
-  const dayOfWeek = today.getDay();
-  const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-  startOfWeek.setHours(0, 0, 0, 0);
+  const startOfWeek = startOfWeekSunday(today);
 
   // 3. Query roadmap for next 14 days (2 weeks)
   const twoWeeksFromNow = new Date(startOfWeek);
