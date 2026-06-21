@@ -1,7 +1,47 @@
 # Backlog
 
-Items deferred from completed phases. Not in priority order — pick by what
-becomes painful first.
+Items deferred from completed phases. The quick index below is roughly
+prioritized; the detailed write-ups follow further down (and in the
+"Older carryover" section).
+
+## Active backlog (prioritized)
+
+1. **AF → HC write-back (ExerciseSession)** — write each logged AF workout back
+   into Health Connect so HC contains every workout. Detailed sketch below.
+2. **Chrome Custom Tabs for OAuth** — replace the user-agent override in
+   `capacitor.config.ts` with `@capacitor/browser` + deep-link return. Only
+   required if publishing to the Play Store. Detail in "Older carryover".
+3. **HeartRate support** — read HR from HC and feed the coach FSM. Needs a fork
+   of the kiwi-health plugin. Detailed sketch below.
+4. **Real-time HC content-change listener** — sync when HC content changes, not
+   only on app-foreground. Needs an Android 14+ foreground service. Detail below.
+5. **Profile avatar dropdown + sign-out** — the header avatar in
+   `app/(app)/layout.tsx` is an inert cosmetic placeholder (noted in
+   `ADAPTIVEFIT_EXECUTION_PLAN.md`). Turn it into a menu with sign-out.
+6. **Voice-to-text for workout notes** — was deferred because the Web Speech
+   API is unreliable on PWA. Now that the app ships in a native Capacitor
+   shell, a native speech plugin (e.g. `@capacitor-community/speech-recognition`)
+   is viable — worth revisiting.
+
+> Note: `ADAPTIVEFIT_EXECUTION_PLAN.md` still has many unchecked `- [ ]` boxes,
+> but those phases (3 tabs, GPS run flow, Google Fit/HC sync, cold-start, RTL,
+> multi-thread coach, analytics) all shipped — see the git history. The plan's
+> checkboxes are stale, not a live backlog.
+
+---
+
+## Workout reminders + Sunday week start — RESOLVED 2026-06-14
+
+On-device local notifications (Capacitor Local Notifications) driven by the
+training roadmap: a morning daily reminder + a pre-workout heads-up per planned
+non-rest session, configurable under Settings → Workout reminders. Same caveat
+as every client change — the APK is a thin shell, so it only goes live after a
+Railway deploy; the `cap sync` + APK rebuild was needed only to compile the
+native plugin in. Also flipped the roadmap/home/coach week anchor from Monday to
+Sunday (now `dayIndex 0=Sun..6=Sat`, matching analytics). See `docs/NOTIFICATIONS.md`.
+Build note: AGP 9 / Gradle 9 rejects `getDefaultProguardFile('proguard-android.txt')`;
+`android/proguard-fix.gradle` rewrites that line on disk before subprojects
+evaluate (a pnpm patch can't be used — the patched-dir path exceeds Windows MAX_PATH).
 
 ---
 

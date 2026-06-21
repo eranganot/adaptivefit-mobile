@@ -91,7 +91,7 @@ export async function getRoadmapData(userId: string): Promise<{
   const todayMidnight = new Date(today);
   todayMidnight.setHours(0, 0, 0, 0);
 
-  const sessionsRaw: (RoadmapSession & { isPastPending: boolean })[] = roadmapRows.map((row) => {
+  const sessionsRaw: (RoadmapSession & { isPastPending: boolean; isRest: boolean })[] = roadmapRows.map((row) => {
     // Derive date: startOfWeek + (weekIndex * 7) + dayIndex
     const sessionDate = new Date(startOfWeek);
     sessionDate.setDate(startOfWeek.getDate() + row.weekIndex * 7 + row.dayIndex);
@@ -132,6 +132,15 @@ export async function getRoadmapData(userId: string): Promise<{
     const isPastPending =
       status === "planned" && sessionMidnight.getTime() < todayMidnight.getTime();
 
+    // A rest/recovery session: every block is a `rest` block (or the coach
+    // titled it a rest day). Used below to resolve same-day conflicts — a real
+    // workout on a date should suppress a rest card on that same date.
+    const isRest =
+      (Array.isArray(plan.blocks) &&
+        plan.blocks.length > 0 &&
+        plan.blocks.every((b) => b.kind === "rest")) ||
+      plan.title?.trim().toLowerCase() === "rest day";
+
     return {
       id: row.id,
       date: sessionDate,
@@ -143,12 +152,13 @@ export async function getRoadmapData(userId: string): Promise<{
       })),
       adjustedNote,
       isPastPending,
+      isRest,
     };
   });
 
   // Hide past-pending rows from the roadmap view. They remain in the DB for
   // audit; they're just confusing as "next workout" framing.
-  let sessions: RoadmapSession[] = sessionsRaw
+  let sessions: (RoadmapSession & { isRest: boolean })[] = sessionsRaw
     .filter((s) => !s.isPastPending)
     .map(({ isPastPending: _ignore, ...rest }) => rest);
 
@@ -172,6 +182,7 @@ export async function getRoadmapData(userId: string): Promise<{
         blocks: [
           { label: "Recovery", detail: "Easy walking, mobility, foam-rolling, or stretching" },
         ],
+        isRest: true,
       },
       ...sessions,
     ];
@@ -194,11 +205,46 @@ export async function getRoadmapData(userId: string): Promise<{
     return sessionKeyIL >= todayKeyIL;
   });
 
+  // Resolve same-day conflicts and duplicates. Two failure modes this fixes:
+  //   1. A rest card AND a real workout on the same date (contradictory — the
+  //      coach swapped to rest but a workout row also exists, or stale rows
+  //      from before the Sun-week change collided on a date). A real session
+  //      always wins; the rest card is dropped.
+  //   2. Duplicate identical cards on the same date (e.g. two "Rest day" rows
+  //      after a regen/shift). Collapsed to one, keeping the most-advanced
+  //      status (completed > adjusted > planned).
+  const statusRank = (s: RoadmapSession["status"]) =>
+    s === "completed" ? 2 : s === "adjusted" ? 1 : 0;
+  const groups = new Map<string, (RoadmapSession & { isRest: boolean })[]>();
+  for (const s of sessions) {
+    const key = s.date.toLocaleDateString("en-CA", { timeZone: tz });
+    const g = groups.get(key);
+    if (g) g.push(s);
+    else groups.set(key, [s]);
+  }
+  sessions = [];
+  for (const group of groups.values()) {
+    // If any real (non-rest) session exists that day, drop the rest cards.
+    const hasReal = group.some((s) => !s.isRest);
+    const kept = hasReal ? group.filter((s) => !s.isRest) : group;
+    // Collapse duplicates by title, preferring the most-advanced status.
+    const byTitle = new Map<string, RoadmapSession & { isRest: boolean }>();
+    for (const s of kept) {
+      const k = s.title.trim().toLowerCase();
+      const existing = byTitle.get(k);
+      if (!existing || statusRank(s.status) > statusRank(existing.status)) {
+        byTitle.set(k, s);
+      }
+    }
+    for (const s of byTitle.values()) sessions.push(s);
+  }
+
   // Sort chronologically (synthetic today card may have landed mid-array).
   sessions.sort((a, b) => a.date.getTime() - b.date.getTime());
 
   return {
-    sessions,
+    // Strip the internal `isRest` flag — not part of the public shape.
+    sessions: sessions.map(({ isRest: _isRest, ...rest }) => rest),
     weekIndex,
     totalWeeks,
   };
