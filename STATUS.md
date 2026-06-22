@@ -23,8 +23,9 @@ Working tree is dirty: `.env.example`, `DEPLOY.md`, `analytics/data.ts`, android
 - The multi-thread coach rename/delete checklist (migration 0007, legacy URL redirects, rename persistence, delete-then-recreate). Mark verified once run on the Pixel 9.
 
 ## Known sharp edges
-See CLAUDE.md — OneDrive locks, `.next` cache after route renames, sandbox can't push.
+See CLAUDE.md — `.next` cache after route renames, sandbox can't push. (Repo now on `C:\dev\` — OneDrive lock failures retired.)
 
 ## Changelog (newest first)
+- 2026-06-22 — Repo moved off OneDrive to `C:\dev\adaptivefit-mobile`; typecheck + lint green on new path.
 - 2026-06-22 — STATUS.md + CLAUDE.md seeded.
 - (prior) — app icon, coach rename/delete, multi-thread coach refactor (0007), smart classifier, Gemini 2.5 Pro coach.
