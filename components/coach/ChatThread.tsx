@@ -122,9 +122,15 @@ export function ChatThread({ threadId, workoutLogId, initialMessages, initialAct
     const p = a.params;
     switch (a.actionType) {
       case "soften_session":
-        return `Ease an upcoming session by ${Number(p.reductionPct ?? 25)}%`;
+        return p.sessionLabel
+          ? `Ease ${String(p.sessionLabel)} by ${Number(p.reductionPct ?? 25)}%`
+          : `Ease an upcoming session by ${Number(p.reductionPct ?? 25)}%`;
       case "swap_to_rest":
-        return "Replace an upcoming session with a rest day";
+        // sessionLabel is stamped server-side from the roadmap row, so the
+        // athlete can see WHICH session gets replaced before approving.
+        return p.sessionLabel
+          ? `Replace ${String(p.sessionLabel)} with a rest day`
+          : "Replace an upcoming session with a rest day";
       case "freeze_week":
         return `Activate a coach freeze for ${Number(p.days ?? 7)} day${Number(p.days ?? 7) === 1 ? "" : "s"}`;
       case "record_symptom":

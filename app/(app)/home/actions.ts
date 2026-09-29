@@ -26,6 +26,7 @@ import {
 import { withGeminiRetry, describeGeminiError } from "@/lib/gemini/retry";
 import { summarizeCoachContext } from "@/lib/gemini/summarizeContext";
 import { COACH_CHAT_TOOLS, functionNameToActionType } from "@/lib/coach/chatTools";
+import { isLeakedToolText, parseLeakedToolCalls, LEAKED_HISTORY_PLACEHOLDER } from "@/lib/coach/leakedToolCalls";
 import { eq, desc, and, inArray, sql, gte } from "drizzle-orm";
 import type { GoalCategory } from "@/lib/coach";
 import { startOfWeekSunday } from "@/lib/dates/week";
@@ -545,6 +546,9 @@ export async function coachChatTurn(
   // Hoisted out of the context-building try block so the Gemini-call block
   // below can pass it to the summarizer.
   let pendingAmbiguousLines: string[] = [];
+  // id → "title (YYYY-MM-DD)" for upcoming sessions; stamped onto proposal
+  // params so the Approve/Decline card names the exact session.
+  const upcomingLabels = new Map<string, string>();
   try {
     await db.insert(coachChatMessages).values({
       userId,
@@ -572,9 +576,12 @@ export async function coachChatTurn(
     // message (we'll send it as the prompt itself).
     const oldestFirst = recent.reverse();
     const withoutLatest = oldestFirst.slice(0, -1);
+    // A model turn that leaked text-form tool calls must NOT be replayed
+    // verbatim — Gemini re-executes those calls on the next turn (prod
+    // 2026-09-29: 10:16 leak → 10:49 three real calls nobody asked for).
     history = withoutLatest.map((m) => ({
       role: m.role === "user" ? "user" : "model",
-      text: m.content,
+      text: m.role !== "user" && isLeakedToolText(m.content) ? LEAKED_HISTORY_PLACEHOLDER : m.content,
     }));
 
     // Pull the workout this thread is about + its sentiment, so the coach
@@ -753,6 +760,7 @@ export async function coachChatTurn(
             d.setDate(startOfWeekTz.getDate() + r.week_index * 7 + r.day_index);
             const dateStr = d.toISOString().slice(0, 10);
             const dayName = d.toLocaleDateString("en-US", { weekday: "long", timeZone: tz });
+            upcomingLabels.set(r.id, `${r.title ?? "session"} (${dayName} ${dateStr})`);
             return `- id=${r.id} · date=${dateStr} (${dayName}) · ${r.title ?? "(untitled)"}`;
           })
           .join("\n") +
@@ -913,7 +921,13 @@ export async function coachChatTurn(
       `\n` +
       `classifySession is different — it applies IMMEDIATELY (no card). Use it when the athlete clearly answers "yes/training" or "no/activity" to an AMBIGUOUS session prompt. Pass the [id=<uuid>] verbatim — don't invent.\n` +
       `\n` +
-      `Non-action questions ("how long should I warm up?") → text-only, no tool. Tools fire only when a real plan change is being made.`;
+      `Non-action questions ("how long should I warm up?") → text-only, no tool. Tools fire only when a real plan change is being made.\n` +
+      `\n` +
+      `NEVER write tool calls as text or code (no "tool_code", no "default_api", no print(...)) and NEVER write out your reasoning or a "thought" section. Invoke tools only through function calling; your text is shown to the athlete verbatim.\n` +
+      `When you call tools, ALSO write one or two plain sentences telling the athlete what you did and what the cards are for.\n` +
+      `\n` +
+      `## Whole-plan requests\n` +
+      `You cannot rebuild the whole training plan from chat. If the athlete asks for a new plan, say so in one line: the Regenerate button on the Roadmap screen rebuilds it from their latest data. Then offer (and call) the specific propose* changes for the next few days that you CAN make.`;
 
     const model = gemini().getGenerativeModel({
       model: modelName,
@@ -1016,6 +1030,26 @@ export async function coachChatTurn(
         reply = "";
       }
 
+      // Leak guard: Gemini Flash sometimes writes tool calls as TEXT
+      // ("tool_code / print(default_api.x(...)) / thought ..."). Never show
+      // that; salvage the calls into real function calls this turn. Dropping
+      // the text lets the tool-only fallback below write the visible reply.
+      const leaked = isLeakedToolText(reply);
+      let salvagedCount = 0;
+      if (leaked) {
+        const allowed = new Set(
+          COACH_CHAT_TOOLS.flatMap((t) =>
+            "functionDeclarations" in t ? (t.functionDeclarations ?? []).map((d) => d.name) : [],
+          ),
+        );
+        if (functionCalls.length === 0) {
+          const salvaged = parseLeakedToolCalls(reply, allowed);
+          for (const fc of salvaged) functionCalls.push(fc);
+          salvagedCount = salvaged.length;
+        }
+        reply = "";
+      }
+
       // Structured log so Railway tells us exactly what came back if anything
       // looks off in production.
       console.info("coachChatTurn response:", JSON.stringify({
@@ -1024,6 +1058,8 @@ export async function coachChatTurn(
         functionCallCount: functionCalls.length,
         functionNames: functionCalls.map((f) => f.name),
         finishReason: res.response.candidates?.[0]?.finishReason ?? null,
+        leaked,
+        salvagedCount,
       }));
 
       if (!reply && functionCalls.length === 0) {
@@ -1136,6 +1172,8 @@ export async function coachChatTurn(
           if (!actionType) return null;
           // Strip 'reason' out of args — store separately. Whatever remains is params.
           const { reason, ...rest } = fc.args as { reason?: unknown } & Record<string, unknown>;
+          const label = typeof rest.sessionId === "string" ? upcomingLabels.get(rest.sessionId) : undefined;
+          if (label) rest.sessionLabel = label;
           return {
             chatMessageId: savedAssistant.id,
             userId,
@@ -1191,7 +1229,8 @@ export async function getChatHistory(
     return rows.map((r) => ({
       id: r.id,
       role: r.role,
-      content: r.content,
+      // Pre-fix rows may hold leaked tool-call text; never render it raw.
+      content: r.role === "assistant" && isLeakedToolText(r.content) ? LEAKED_HISTORY_PLACEHOLDER : r.content,
       createdAt: r.createdAt,
     }));
   } catch (err) {

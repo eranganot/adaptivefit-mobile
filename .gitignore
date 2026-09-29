@@ -47,3 +47,10 @@ android/.cxx/
 # Keystores must never be committed
 *.jks
 *.keystore
+
+# Local agent/session state -- noise on every git status, and noise is where a
+# real modified file hides. Portable copies live in the account skill library.
+.claude/
+
+# Staging for files the device bridge cannot delete; remove by hand.
+_to_delete/
