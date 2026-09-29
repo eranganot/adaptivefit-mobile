@@ -1,8 +1,8 @@
--- 0002_action_type_add_session.sql
+-- 0008_action_type_replace_session.sql
 --
--- Extends coach_chat_actions.action_type to allow 'add_session' (used by the
--- new proposeAddSession tool — coach can now propose adding a NEW session,
--- not just modifying an existing one).
+-- Extends coach_chat_actions.action_type to allow 'replace_session' (used by the
+-- new proposeReplaceSession tool — coach can replace a planned session with a
+-- different workout instead of swapping it to rest + adding a new row).
 --
 -- Idempotent: drops any prior CHECK constraint on action_type before
 -- recreating it with the expanded value list. Safe to re-run on every deploy.
@@ -32,7 +32,5 @@ ALTER TABLE coach_chat_actions
     'freeze_week',
     'record_symptom',
     'add_session',
-    -- 0008 adds replace_session. This file re-runs on EVERY deploy before 0008, so
-    -- its list must stay a superset or re-adding the CHECK fails on existing rows.
     'replace_session'
   ));

@@ -745,9 +745,9 @@ export async function coachChatTurn(
     const upcomingRows = await db.execute(sql`
       SELECT id, week_index, day_index, session_plan->>'title' AS title
       FROM training_roadmap
-      WHERE user_id = ${userId} AND status = 'pending'
+      WHERE user_id = ${userId} AND status IN ('pending', 'modified')
       ORDER BY week_index, day_index
-      LIMIT 6
+      LIMIT 8
     `);
     const upcomingList = (upcomingRows.rows as Array<{ id: string; week_index: number; day_index: number; title: string | null }>);
     if (upcomingList.length > 0) {
@@ -913,7 +913,9 @@ export async function coachChatTurn(
       `- Mobility: RPE = effort of the work, not training stress. Don't trigger freeze on it.\n` +
       `\n` +
       `## Plan-change tools — HARD RULE\n` +
-      `Tools: proposeSoftenSession, proposeSwapToRest, proposeAddSession, proposeFreezeWeek, proposeRecordSymptom, classifySession.\n` +
+      `Tools: proposeSoftenSession, proposeReplaceSession, proposeSwapToRest, proposeAddSession, proposeFreezeWeek, proposeRecordSymptom, classifySession.\n` +
+      `\n` +
+      `To CHANGE what a planned session is (harder, easier, a different workout) make ONE proposeReplaceSession call on that session's id. Do NOT use proposeSwapToRest as a delete step, and never propose rest unless the athlete asks for rest or a pain/RPE trigger above fires.\n` +
       `\n` +
       `If your text describes a plan change ("I propose…", "let's swap…", "add a session…"), you MUST also CALL the matching propose* tool. Text alone is invisible — the athlete only sees an Approve/Decline card when the tool fires. Pair text + tool call every time.\n` +
       `\n` +

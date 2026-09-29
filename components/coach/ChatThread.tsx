@@ -135,6 +135,12 @@ export function ChatThread({ threadId, workoutLogId, initialMessages, initialAct
         return `Activate a coach freeze for ${Number(p.days ?? 7)} day${Number(p.days ?? 7) === 1 ? "" : "s"}`;
       case "record_symptom":
         return `Record symptom "${String(p.symptom ?? "")}" at severity ${Number(p.severity ?? 0)}`;
+      case "replace_session": {
+        const title = String(p.title ?? "a new workout");
+        return p.sessionLabel
+          ? `Replace ${String(p.sessionLabel)} with "${title}"`
+          : `Replace a planned session with "${title}"`;
+      }
       case "add_session": {
         const title = String(p.title ?? "new session");
         const date = String(p.targetDate ?? "a future date");

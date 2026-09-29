@@ -140,6 +140,37 @@ export async function applyChatAction(actionId: string): Promise<Result> {
         .update(trainingRoadmap)
         .set({ sessionPlan: restPlan, source: "coach_proposal", status: "modified" })
         .where(eq(trainingRoadmap.id, sessionId));
+    } else if (row.actionType === "replace_session") {
+      // Replace the workout on an existing planned day. Keeps the row (and so
+      // its date), swaps the run blocks, keeps warm-up / mobility / strength.
+      const sessionId = String(params.sessionId ?? "");
+      if (!sessionId) return { success: false, error: "Missing sessionId" };
+      const target = await db.query.trainingRoadmap.findFirst({
+        where: and(eq(trainingRoadmap.id, sessionId), eq(trainingRoadmap.userId, userId)),
+      });
+      if (!target) return { success: false, error: "Target session not found" };
+      reversal = { sessionPlan: target.sessionPlan, source: target.source, status: target.status };
+
+      const oldPlan = target.sessionPlan as SessionPlan;
+      const distanceKm = Math.min(42.2, Math.max(0.1, Number(params.distanceKm ?? 5)));
+      const paceSecPerKm = Math.min(900, Math.max(180, Math.round(Number(params.paceSecPerKm ?? 435))));
+      const reps = Math.min(30, Math.max(1, Math.round(Number(params.reps ?? 1))));
+      const recoverySec = reps > 1 ? Math.min(600, Math.max(0, Math.round(Number(params.recoverySec ?? 90)))) : 0;
+      const kept = (oldPlan.blocks ?? []).filter((b) => b.kind !== "run_block" && b.kind !== "rest");
+      const newPlan: SessionPlan = {
+        ...oldPlan,
+        title: String(params.title ?? oldPlan.title),
+        rationale: row.reason,
+        blocks: [
+          ...kept.filter((b) => b.kind === "warmup"),
+          { kind: "run_block", distanceKm, paceSecPerKm, reps, recoverySec },
+          ...kept.filter((b) => b.kind !== "warmup"),
+        ],
+      };
+      await db
+        .update(trainingRoadmap)
+        .set({ sessionPlan: newPlan, source: "coach_proposal", status: "pending" })
+        .where(eq(trainingRoadmap.id, sessionId));
     } else if (row.actionType === "freeze_week") {
       const days = Math.min(14, Math.max(1, Number(params.days ?? 7)));
       const existing = await db.query.userLevelState.findFirst({
@@ -336,7 +367,7 @@ export async function revertChatAction(actionId: string): Promise<Result> {
     const reversal = (row.reversal ?? {}) as Record<string, unknown>;
     const params = row.params as Record<string, unknown>;
 
-    if (row.actionType === "soften_session" || row.actionType === "swap_to_rest") {
+    if (row.actionType === "soften_session" || row.actionType === "swap_to_rest" || row.actionType === "replace_session") {
       const sessionId = String(params.sessionId ?? "");
       const sessionPlan = reversal.sessionPlan;
       const source = (reversal.source as "auto" | "manual" | "coach_proposal" | undefined) ?? "auto";
@@ -422,7 +453,7 @@ export async function revertChatAction(actionId: string): Promise<Result> {
 export type ChatActionView = {
   id: string;
   chatMessageId: string;
-  actionType: "soften_session" | "swap_to_rest" | "freeze_week" | "record_symptom" | "add_session";
+  actionType: "soften_session" | "swap_to_rest" | "freeze_week" | "record_symptom" | "add_session" | "replace_session";
   params: Record<string, unknown>;
   reason: string;
   status: "pending" | "approved" | "declined" | "reverted";

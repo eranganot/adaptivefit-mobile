@@ -29,7 +29,7 @@ export const SYMPTOM_VOCAB = [
 export type SymptomTag = (typeof SYMPTOM_VOCAB)[number];
 
 /** Action types persisted in coach_chat_actions.action_type. */
-export type ActionType = "soften_session" | "swap_to_rest" | "freeze_week" | "record_symptom" | "add_session";
+export type ActionType = "soften_session" | "swap_to_rest" | "freeze_week" | "record_symptom" | "add_session" | "replace_session";
 
 /** Parameter shapes per action type. The server validates these before persisting. */
 export type ActionParams =
@@ -37,7 +37,8 @@ export type ActionParams =
   | { type: "swap_to_rest"; sessionId: string }
   | { type: "freeze_week"; days: number }
   | { type: "record_symptom"; symptom: SymptomTag; severity: number }
-  | { type: "add_session"; targetDate: string; title: string; distanceKm: number; paceSecPerKm: number };
+  | { type: "add_session"; targetDate: string; title: string; distanceKm: number; paceSecPerKm: number }
+  | { type: "replace_session"; sessionId: string; title: string; distanceKm: number; paceSecPerKm: number; reps?: number; recoverySec?: number };
 
 /**
  * Gemini Tool declarations. Pass these as `tools: COACH_CHAT_TOOLS` when
@@ -76,8 +77,10 @@ export const COACH_CHAT_TOOLS: Tool[] = [
       {
         name: "proposeSwapToRest",
         description:
-          "Propose replacing a planned session with rest/mobility. Use when an injury " +
-          "or pain spike means a workout should be skipped entirely (not just eased). " +
+          "Propose replacing a planned session with rest/mobility. Use ONLY when an injury " +
+          "or pain spike means a workout should be skipped entirely (not just eased), or the " +
+          "athlete explicitly asks for rest. NEVER use this as a step to swap in a different " +
+          "workout; use proposeReplaceSession for that. " +
           "The user will see an Approve/Decline card; you do NOT apply this change yourself.",
         parameters: {
           type: SchemaType.OBJECT,
@@ -175,6 +178,50 @@ export const COACH_CHAT_TOOLS: Tool[] = [
         },
       },
       {
+        name: "proposeReplaceSession",
+        description:
+          "Propose REPLACING an existing planned session with a different run workout " +
+          "(harder, easier, or just different) on the same day. Use when the athlete asks " +
+          "to change what a planned session is, e.g. 'make today a bit harder' or 'swap " +
+          "today's intervals for an easy run'. One card, one approval; the session keeps " +
+          "its date. Prefer this over proposeSwapToRest + proposeAddSession. " +
+          "The user will see an Approve/Decline card; you do NOT apply this change yourself.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            sessionId: {
+              type: SchemaType.STRING,
+              description: "UUID of the planned session to replace (from 'Upcoming planned sessions').",
+            },
+            title: {
+              type: SchemaType.STRING,
+              description: "Display title for the new workout (e.g., '6 × 600 m @ 5:20 /km').",
+            },
+            distanceKm: {
+              type: SchemaType.NUMBER,
+              description: "Distance in km PER REP (0.6 for 600 m intervals; 5 for one continuous 5 km run).",
+            },
+            paceSecPerKm: {
+              type: SchemaType.INTEGER,
+              description: "Target pace in seconds per km (e.g., 320 for 5:20/km).",
+            },
+            reps: {
+              type: SchemaType.INTEGER,
+              description: "Number of repeats. 1 for a continuous run.",
+            },
+            recoverySec: {
+              type: SchemaType.INTEGER,
+              description: "Recovery between reps in seconds. 0 for a continuous run.",
+            },
+            reason: {
+              type: SchemaType.STRING,
+              description: "One-sentence reason for the change.",
+            },
+          },
+          required: ["sessionId", "title", "distanceKm", "paceSecPerKm", "reason"],
+        },
+      },
+      {
         name: "proposeAddSession",
         description:
           "Propose ADDING a NEW session to the roadmap on a specific future date. Use when " +
@@ -225,6 +272,7 @@ export function functionNameToActionType(name: string): ActionType | null {
     case "proposeFreezeWeek": return "freeze_week";
     case "proposeRecordSymptom": return "record_symptom";
     case "proposeAddSession": return "add_session";
+    case "proposeReplaceSession": return "replace_session";
     default: return null;
   }
 }
