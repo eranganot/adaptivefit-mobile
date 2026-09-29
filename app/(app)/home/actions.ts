@@ -464,7 +464,7 @@ export async function logManualWorkout(input: {
 export type CoachChatErrorCode = "auth" | "limit" | "gemini" | "db" | "unknown";
 
 export type CoachChatResult =
-  | { reply: string }
+  | { reply: string; messageId?: string }
   | { error: string; code: CoachChatErrorCode };
 
 // Hard cap to prevent runaway threads. With rolling-window context (we send
@@ -1107,6 +1107,9 @@ export async function coachChatTurn(
   }
 
   // 5. Persist assistant reply (model stamp) + any proposed actions linked to it.
+  // The saved row id goes back to the client: proposal cards are matched to
+  // messages by chatMessageId, so an optimistic id never shows its cards.
+  let savedMessageId: string | undefined;
   try {
     const [savedAssistant] = await db
       .insert(coachChatMessages)
@@ -1119,6 +1122,7 @@ export async function coachChatTurn(
         modelUsed: modelName,
       })
       .returning({ id: coachChatMessages.id });
+    savedMessageId = savedAssistant?.id;
 
     // Bump the thread's lastMessageAt so it floats to the top of the ChatList.
     // Non-fatal: if this fails the ChatList ordering is slightly stale but
@@ -1192,7 +1196,7 @@ export async function coachChatTurn(
     console.error("coachChatTurn persist-reply db error (non-fatal):", err);
   }
 
-  return { reply };
+  return { reply, messageId: savedMessageId };
 }
 
 export type ChatMessage = {
@@ -1223,8 +1227,11 @@ export async function getChatHistory(
           eq(coachChatMessages.threadId, threadId),
         ),
       )
-      .orderBy(coachChatMessages.createdAt)
+      // Newest N, then flip to oldest-first. Plain ASC + LIMIT returned the
+      // OLDEST 40, so threads past 40 messages hid their latest turns.
+      .orderBy(desc(coachChatMessages.createdAt))
       .limit(limit);
+    rows.reverse();
 
     return rows.map((r) => ({
       id: r.id,

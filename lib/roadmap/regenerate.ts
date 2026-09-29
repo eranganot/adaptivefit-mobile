@@ -5,6 +5,7 @@ import { evaluateCoach } from "@/lib/coach";
 import type { CoachInputs, GoalCategory } from "@/lib/coach";
 import { periodize } from "@/lib/coach/periodize";
 import { summarizeExternalActivity } from "@/lib/coach/externalActivity";
+import { withoutOccupiedSlots } from "@/lib/roadmap/slots";
 
 /**
  * Core regeneration logic — shared between the roadmap server action and
@@ -161,8 +162,16 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
     }
   }
 
-  if (sessionsToCreate.length > 0) {
-    await db.insert(trainingRoadmap).values(sessionsToCreate);
+  // Rows that survived the delete (manual, coach_proposal, completed,
+  // modified) own their day. Never stack an auto session on top of them.
+  const surviving = await db
+    .select({ weekIndex: trainingRoadmap.weekIndex, dayIndex: trainingRoadmap.dayIndex })
+    .from(trainingRoadmap)
+    .where(eq(trainingRoadmap.userId, userId));
+  const toInsert = withoutOccupiedSlots(sessionsToCreate, surviving);
+
+  if (toInsert.length > 0) {
+    await db.insert(trainingRoadmap).values(toInsert);
   }
 }
 

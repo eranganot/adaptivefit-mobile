@@ -161,6 +161,9 @@ export function ChatThread({ threadId, workoutLogId, initialMessages, initialAct
     try {
       const result = await coachChatTurn(text, threadId);
       let replyText: string;
+      // Real DB id when the server saved the reply — proposal cards attach by
+      // chatMessageId, so an optimistic id hid them until a remount.
+      let replyId = `opt-reply-${Date.now()}`;
       if ("error" in result) {
         // Per-code user-facing copy. For "gemini" errors the server now
         // sends a specific message via describeGeminiError() — surface it
@@ -187,10 +190,11 @@ export function ChatThread({ threadId, workoutLogId, initialMessages, initialAct
         }
       } else {
         replyText = result.reply;
+        if (result.messageId) replyId = result.messageId;
       }
 
       const assistantMsg: ChatMessage = {
-        id: `opt-reply-${Date.now()}`,
+        id: replyId,
         role: "assistant",
         content: replyText,
         createdAt: new Date(),
