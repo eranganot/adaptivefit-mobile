@@ -22,3 +22,10 @@ Running-coach PWA. Next.js + Postgres + Gemini, deployed on Railway (auto-deploy
 - Keep deploy/round summaries to a **short checklist**, not multi-section essays. Name files changed + the commands to run + 2–5 smoke checks. That's it.
 - Edit in place; don't re-read a file you just wrote.
 - For broad "where is X" searches, use the Explore subagent so the main thread stays lean.
+
+## Ship rules (added by setup-claude-local.ps1)
+- Read STATUS.md first; update it last.
+- Before commit: run the repo's checks (see the ship-it skill / README). Never commit failing typecheck or tests.
+- Commit messages via git commit -F <file> written WITHOUT a BOM. One commit per round; check git log -1 so a re-run never duplicates a commit.
+- Never force-push. Never commit secrets (.env, agent keys, tokens).
+- Deploys happen on push to main (Railway). After pushing, read the deploy logs and confirm a line only the new code emits.
