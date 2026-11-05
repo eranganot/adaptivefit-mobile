@@ -7,6 +7,7 @@ import Google from "next-auth/providers/google";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { isEmailAllowed } from "./allowlist";
 
 declare module "next-auth" {
   interface Session extends DefaultSession {
@@ -26,9 +27,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   callbacks: {
     async signIn({ profile }) {
-      const allowed = process.env.ALLOWED_EMAIL?.toLowerCase().trim();
-      if (!allowed) return true; // No allowlist set — open mode (dev only)
-      return profile?.email?.toLowerCase() === allowed;
+      return isEmailAllowed(profile?.email);
     },
     async jwt({ token, profile }) {
       if (profile?.email) {
