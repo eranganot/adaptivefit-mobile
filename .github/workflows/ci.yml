@@ -1,0 +1,58 @@
+# AF-2 (2026-11-05): AdaptiveFit had no CI, so nothing ran tsc, lint, tests or
+# the build before Railway deployed a push to main.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: adaptivefit_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/adaptivefit_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      # The migrations in drizzle/ are ALTERs over a schema drizzle-kit created,
+      # so a fresh database needs push first, then the migrations on top.
+      - name: Schema for the DB tests
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/adaptivefit_ci
+        run: |
+          pnpm drizzle-kit push --force
+          pnpm db:migrate
+      - run: pnpm test
+      - name: Build
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/adaptivefit_ci
+          AUTH_SECRET: ci-build-only-not-a-secret-000000
+          AUTH_GOOGLE_ID: ci
+          AUTH_GOOGLE_SECRET: ci
+        run: pnpm build
+      - name: Audit (production deps, critical)
+        run: pnpm audit --prod --audit-level critical
