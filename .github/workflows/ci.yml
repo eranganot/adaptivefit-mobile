@@ -38,14 +38,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
-      # The migrations in drizzle/ are ALTERs over a schema drizzle-kit created,
-      # so a fresh database needs push first, then the migrations on top.
-      - name: Schema for the DB tests
+      # AF-6: the migrations alone build the schema from an empty database
+      # (0000_00_schema_bootstrap.sql), which is also what this step proves.
+      - name: Schema for the DB tests (migrations only)
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/adaptivefit_ci
-        run: |
-          pnpm drizzle-kit push --force
-          pnpm db:migrate
+        run: pnpm db:migrate
       - run: pnpm test
       - name: Build
         env:
