@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { reanchorRoadmap } from "@/lib/roadmap/anchor";
 import { trainingRoadmap, workoutLogs, goals } from "@/lib/db/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import type { SessionPlan, SessionBlock } from "@/lib/coach";
@@ -34,6 +35,9 @@ export async function getRoadmapData(userId: string): Promise<{
     const weeksDiff = Math.floor((targetDate.getTime() - today.getTime()) / (7 * 24 * 60 * 60 * 1000));
     weekIndex = Math.max(0, weeksDiff);
   }
+
+  // AF-B6: shift surviving rows (manual / coach / completed) onto this week's indexes.
+  await reanchorRoadmap(userId);
 
   // 2. Get the current week boundaries (Sunday = week start, index 0)
   const today = new Date();

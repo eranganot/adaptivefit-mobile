@@ -11,6 +11,7 @@
  * Week anchor = Sunday, matching the rest of the app (see lib/dates/week.ts).
  */
 
+import { reanchorRoadmap } from "@/lib/roadmap/anchor";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { trainingRoadmap, workoutLogs, users } from "@/lib/db/schema";
@@ -32,6 +33,8 @@ export async function getUpcomingPlannedSessions(): Promise<PlannedSession[]> {
   const startOfWeek = startOfWeekSunday(today);
   const todayMidnight = new Date(today);
   todayMidnight.setHours(0, 0, 0, 0);
+
+  await reanchorRoadmap(user.id); // AF-B6
 
   // Roadmap rows for the current + next couple of weeks (the generator only
   // ever plans ~2 weeks ahead, but we read a little wider to be safe).

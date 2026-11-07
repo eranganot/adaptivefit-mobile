@@ -1,5 +1,7 @@
 "use server";
 
+import { dailyCapRefusal, MAX_MESSAGE_CHARS } from "@/lib/coach/dailyCap";
+import { reanchorRoadmap } from "@/lib/roadmap/anchor";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
@@ -532,6 +534,12 @@ export async function coachChatTurn(
         code: "limit",
       };
     }
+    // AF-6: per-user daily budget across all threads, and a bounded message.
+    if (message.length > MAX_MESSAGE_CHARS) {
+      return { error: `Message is too long (max ${MAX_MESSAGE_CHARS} characters)`, code: "limit" };
+    }
+    const refusal = await dailyCapRefusal(userId);
+    if (refusal) return { error: refusal, code: "limit" };
   } catch (err) {
     console.error("coachChatTurn cap-check db error:", err);
     return { error: err instanceof Error ? err.message : "Database error", code: "db" };
@@ -742,10 +750,15 @@ export async function coachChatTurn(
     // getDay() (0=Sun), so the result is this week's Sunday at local midnight.
     const startOfWeekTz = startOfWeekSunday(nowInTz);
 
+    // AF-B6: indexes re-derived for this week first, and only sessions from today
+    // on - stale rows from past weeks used to fill this LIMIT 8 list, so the
+    // coach could not see (or target) what is actually coming up.
+    await reanchorRoadmap(userId);
     const upcomingRows = await db.execute(sql`
       SELECT id, week_index, day_index, session_plan->>'title' AS title
       FROM training_roadmap
       WHERE user_id = ${userId} AND status IN ('pending', 'modified')
+        AND (session_date IS NULL OR session_date >= (now() AT TIME ZONE ${tz})::date)
       ORDER BY week_index, day_index
       LIMIT 8
     `);

@@ -6,6 +6,7 @@ import type { CoachInputs, GoalCategory } from "@/lib/coach";
 import { periodize } from "@/lib/coach/periodize";
 import { summarizeExternalActivity } from "@/lib/coach/externalActivity";
 import { withoutOccupiedSlots } from "@/lib/roadmap/slots";
+import { reanchorRoadmap } from "@/lib/roadmap/anchor";
 
 /**
  * Core regeneration logic — shared between the roadmap server action and
@@ -25,6 +26,8 @@ export async function regenerateRoadmapForUser(userId: string): Promise<void> {
 }
 
 async function regenerateIn(db: Tx, userId: string): Promise<void> {
+  // AF-B6: surviving rows onto this week's indexes before slots are compared.
+  await reanchorRoadmap(userId, db);
   // Non-destructive regen: only delete rows we created ourselves (source='auto').
   // Manually-added sessions and coach-proposed adjustments survive every regen.
   await db

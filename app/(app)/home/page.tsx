@@ -1,4 +1,5 @@
 import { auth } from "@/lib/auth";
+import { reanchorRoadmap } from "@/lib/roadmap/anchor";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { workoutLogs, userLevelState, users, feedbackSentiment, trainingRoadmap, coachChatMessages, goals } from "@/lib/db/schema";
@@ -89,6 +90,7 @@ export default async function HomePage() {
     const todayMidnight = new Date(today);
     todayMidnight.setHours(0, 0, 0, 0);
 
+    await reanchorRoadmap(user.id); // AF-B6
     const pendingRows = await db
       .select()
       .from(trainingRoadmap)
