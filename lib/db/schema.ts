@@ -198,6 +198,9 @@ export const trainingRoadmap = pgTable("training_roadmap", {
   goalId: uuid("goal_id").references(() => goals.id, { onDelete: "set null" }),
   weekIndex: integer("week_index").notNull(),
   dayIndex: integer("day_index").notNull(), // 0=Sun..6=Sat (week anchor = Sunday)
+  // AF-B6: the calendar date the indexes stand for. Stamped by a DB trigger
+  // (drizzle/0009); lib/roadmap/anchor.ts re-derives the indexes from it.
+  sessionDate: date("session_date"),
   sessionPlan: jsonb("session_plan").notNull(), // {title, blocks:[...], warmup, mobility}
   status: text("status", {
     enum: ["pending", "completed", "skipped", "modified"],

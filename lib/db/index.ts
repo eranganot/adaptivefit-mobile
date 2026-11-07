@@ -37,3 +37,6 @@ export const db: DB = new Proxy({} as DB, {
 });
 
 export { schema };
+
+/** A transaction handle: same query API as `db`, scoped to one transaction. */
+export type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];

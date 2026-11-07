@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db as rootDb, type Tx } from "@/lib/db";
 import { trainingRoadmap, workoutLogs, userLevelState, goals, fitSessions } from "@/lib/db/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
 import { evaluateCoach } from "@/lib/coach";
@@ -6,6 +6,7 @@ import type { CoachInputs, GoalCategory } from "@/lib/coach";
 import { periodize } from "@/lib/coach/periodize";
 import { summarizeExternalActivity } from "@/lib/coach/externalActivity";
 import { withoutOccupiedSlots } from "@/lib/roadmap/slots";
+import { reanchorRoadmap } from "@/lib/roadmap/anchor";
 
 /**
  * Core regeneration logic — shared between the roadmap server action and
@@ -18,6 +19,15 @@ import { withoutOccupiedSlots } from "@/lib/roadmap/slots";
  * (progressive planning, Bug #3).
  */
 export async function regenerateRoadmapForUser(userId: string): Promise<void> {
+  // AF-B7: the delete of the old auto rows and the insert of the new ones are
+  // one transaction. A crash or a failed insert between them used to leave the
+  // user with an empty fortnight.
+  await rootDb.transaction(async (tx) => regenerateIn(tx, userId));
+}
+
+async function regenerateIn(db: Tx, userId: string): Promise<void> {
+  // AF-B6: surviving rows onto this week's indexes before slots are compared.
+  await reanchorRoadmap(userId, db);
   // Non-destructive regen: only delete rows we created ourselves (source='auto').
   // Manually-added sessions and coach-proposed adjustments survive every regen.
   await db
