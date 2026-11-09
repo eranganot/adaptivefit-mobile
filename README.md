@@ -316,7 +316,7 @@ pnpm lint
 
 ## Deploy (Railway)
 
-Railway auto-deploys from `main`. Build command (in `railway.toml`) runs `pnpm db:migrate` before `pnpm build`, so schema changes apply automatically on push.
+Railway auto-deploys from `main`. The pre-deploy step in `.railway/railway.ts` runs `pnpm db:migrate` before the new build takes traffic, so schema changes apply automatically on push.
 
 ```bash
 git push origin main        # triggers Railway build + deploy

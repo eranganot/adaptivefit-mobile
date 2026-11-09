@@ -119,7 +119,7 @@ You already have a Railway project: `0ccaffc5-6785-4d99-888d-4c0f5bffaffe`.
    - Click **Deploy** to retry
 
 5. **Run the first migration**
-   - Build command in `railway.toml` already runs `pnpm db:migrate` automatically
+   - The pre-deploy step in `.railway/railway.ts` runs `pnpm db:migrate` automatically
    - Verify by opening Railway logs after deploy — you should see `Migrations complete.`
 
 ---
