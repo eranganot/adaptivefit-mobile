@@ -1,0 +1,12 @@
+# Shell scripts must keep LF endings on every OS, or they fail with
+# "/bin/sh^M: bad interpreter" (seen building the APK on a clone with core.autocrlf=true).
+* text=auto
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
+*.jar binary
+*.keystore binary
+*.jks binary
