@@ -54,3 +54,5 @@ android/.cxx/
 
 # Staging for files the device bridge cannot delete; remove by hand.
 _to_delete/
+
+.claude/settings.local.json
